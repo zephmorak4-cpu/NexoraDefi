@@ -30,8 +30,8 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
       - key: ANALYST_PROVIDER
-        value: openai
+        value: template
       - key: ANALYST_MODEL
-        value: gpt-4o-mini
+        value: nexora-template-v1
       - key: OPENAI_API_KEY
         sync: false

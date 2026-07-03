@@ -164,7 +164,7 @@ Render can deploy directly from the committed `render.yaml` blueprint:
 - Start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Health check: `/health`
 
-Use Render Blueprint deployment from `zephmorak4-cpu/NexoraDefi` and set all `sync: false` secrets in the Render dashboard. Keep real API keys out of Git.
+Use Render Blueprint deployment from `zephmorak4-cpu/NexoraDefi` and set all `sync: false` secrets in the Render dashboard. Keep real API keys out of Git. The Render development blueprint uses deterministic analyst templates by default so reports stay fully evidence-bound.
 
 ## Railway
 
