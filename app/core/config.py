@@ -382,10 +382,6 @@ class Settings(BaseSettings):
         required = {
             "DATABASE_URL": self.database_url if self.database_url.startswith(("postgresql+asyncpg://", "postgresql://")) else None,
             "BLOCKCHAIN_API_KEY": self.moralis_api_key or self.etherscan_api_key,
-            "COINGECKO_API_KEY": self.coingecko_api_key,
-            "REDDIT_CLIENT_ID": self.reddit_client_id,
-            "REDDIT_CLIENT_SECRET": self.reddit_client_secret,
-            "CRYPTOPANIC_API_KEY": self.cryptopanic_api_key,
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_CHAT_ID": self.telegram_chat_id,
         }

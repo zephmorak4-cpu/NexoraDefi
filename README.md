@@ -51,17 +51,19 @@ For local development, missing API credentials cause affected collectors to log 
 
 ## Production Credentials
 
-The MVP preserves the existing configured integrations and environment names:
+Required for production Smart Money MVP startup:
 
 - `DATABASE_URL`
-- `ETHERSCAN_API_KEY`
-- `MORALIS_API_KEY`
+- `MORALIS_API_KEY` or `ETHERSCAN_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+Optional integrations that enrich collection or report wording:
+
 - `COINGECKO_API_KEY`
 - `REDDIT_CLIENT_ID`
 - `REDDIT_CLIENT_SECRET`
 - `CRYPTOPANIC_API_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
 - `OPENAI_API_KEY` when `ANALYST_PROVIDER=openai`
 
 Do not commit real secrets. Keep them in `.env`, platform environment settings, or your secret manager.
@@ -174,4 +176,4 @@ Railway uses the committed `railway.json`:
 - Build command: `pip install -e .`
 - Start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
-Set production secrets in Railway Variables, never in Git. Required production values include `APP_ENV=production`, `DATABASE_URL`, blockchain/market/social/news keys, Telegram credentials, and OpenAI analyst credentials when `ANALYST_PROVIDER=openai`.
+Set production secrets in Railway Variables, never in Git. Required production values include `APP_ENV=production`, `DATABASE_URL`, a blockchain API key, and Telegram credentials. Market, social, news, and OpenAI analyst credentials are optional enrichments.

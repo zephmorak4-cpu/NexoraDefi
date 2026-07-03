@@ -9,9 +9,32 @@ def test_development_allows_missing_secrets():
     assert settings.app_env == "development"
 
 
-def test_production_requires_all_secrets():
-    with pytest.raises(ValidationError, match="missing production environment variables"):
+def test_production_requires_core_mvp_secrets(monkeypatch):
+    for name in (
+        "ETHERSCAN_API_KEY",
+        "MORALIS_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(
+        ValidationError,
+        match="BLOCKCHAIN_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID",
+    ):
         Settings(app_env="production", database_url="postgresql+asyncpg://localhost/db")
+
+
+def test_production_requires_core_mvp_secrets_only():
+    settings = Settings(
+        app_env="production",
+        database_url="postgresql+asyncpg://localhost/db",
+        moralis_api_key="moralis",
+        telegram_bot_token="telegram",
+        telegram_chat_id=123,
+    )
+
+    assert settings.app_env == "production"
 
 
 def test_plain_postgres_url_is_adapted():
