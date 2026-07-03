@@ -154,6 +154,18 @@ Without those values, the platform uses deterministic templates.
 
 The local MVP validation currently passes with 50 tests.
 
+## Render
+
+Render can deploy directly from the committed `render.yaml` blueprint:
+
+- Runtime: Python
+- Branch: `development`
+- Build command: `pip install -e .`
+- Start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Health check: `/health`
+
+Use Render Blueprint deployment from `zephmorak4-cpu/NexoraDefi` and set all `sync: false` secrets in the Render dashboard. Keep real API keys out of Git.
+
 ## Railway
 
 Railway uses the committed `railway.json`:

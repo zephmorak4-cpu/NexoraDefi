@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: nexora-defi
+    runtime: python
+    plan: starter
+    branch: development
+    buildCommand: pip install -e .
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: MORALIS_API_KEY
+        sync: false
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: CRYPTOPANIC_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ANALYST_PROVIDER
+        value: openai
+      - key: ANALYST_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_API_KEY
+        sync: false
