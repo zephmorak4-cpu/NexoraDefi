@@ -153,3 +153,13 @@ Without those values, the platform uses deterministic templates.
 ```
 
 The local MVP validation currently passes with 50 tests.
+
+## Railway
+
+Railway uses the committed `railway.json`:
+
+- Builder: Nixpacks
+- Build command: `pip install -e .`
+- Start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+Set production secrets in Railway Variables, never in Git. Required production values include `APP_ENV=production`, `DATABASE_URL`, blockchain/market/social/news keys, Telegram credentials, and OpenAI analyst credentials when `ANALYST_PROVIDER=openai`.
