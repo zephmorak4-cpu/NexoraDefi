@@ -87,9 +87,14 @@ class SolanaProvider(BlockchainProvider):
         return [self._normalize_transfer(item) for item in raw_items if self._has_token(item)]
 
     async def token_market_data(self, token_address: str, token_symbol: str = "UNKNOWN") -> TokenMarketData:
-        payload = await self.dexscreener_client.request_json("GET", f"/latest/dex/tokens/{token_address}")
-        pairs = payload.get("pairs", []) if isinstance(payload, dict) else []
-        pair = pairs[0] if pairs else {}
+        pairs_payload = await self.dexscreener_client.request_json("GET", f"/tokens/v1/solana/{token_address}")
+        pairs = self._pairs_from_payload(pairs_payload)
+        if not pairs:
+            pairs_payload = await self.dexscreener_client.request_json(
+                "GET", f"/token-pairs/v1/solana/{token_address}"
+            )
+            pairs = self._pairs_from_payload(pairs_payload)
+        pair = self._best_pair(pairs)
         liquidity = pair.get("liquidity") or {}
         volume = pair.get("volume") or {}
         base_token = pair.get("baseToken") or {}
@@ -103,6 +108,26 @@ class SolanaProvider(BlockchainProvider):
             holder_count=None,
             risk_flags=0,
         )
+
+    @staticmethod
+    def _pairs_from_payload(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            pairs = payload.get("pairs", [])
+            return [item for item in pairs if isinstance(item, dict)] if isinstance(pairs, list) else []
+        return []
+
+    @classmethod
+    def _best_pair(cls, pairs: list[dict[str, Any]]) -> dict[str, Any]:
+        solana_pairs = [pair for pair in pairs if pair.get("chainId") == "solana"]
+        candidates = solana_pairs or pairs
+        return max(candidates, key=cls._pair_liquidity, default={})
+
+    @classmethod
+    def _pair_liquidity(cls, pair: dict[str, Any]) -> Decimal:
+        liquidity = pair.get("liquidity") or {}
+        return cls._decimal_or_none(liquidity.get("usd")) or Decimal("0")
 
     @staticmethod
     def _has_token(item: dict[str, Any]) -> bool:
@@ -162,4 +187,3 @@ class SolanaProvider(BlockchainProvider):
     async def close(self) -> None:
         await self.moralis_client.close()
         await self.dexscreener_client.close()
-
