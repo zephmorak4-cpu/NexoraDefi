@@ -12,7 +12,7 @@ class TokenRecord(Record):
     blockchain_address: str | None = None
     symbol: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=255)
-    chain: str = "ethereum"
+    chain: str = "solana"
     category: str | None = None
 
 
@@ -219,4 +219,3 @@ class AnalystReportResponse(Record):
     language: str
     content: str
     evidence: dict
-

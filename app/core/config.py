@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     telegram_chat_id: int | None = None
 
     etherscan_chain_id: int = 1
-    moralis_chain: str = "eth"
+    moralis_chain: str = "solana"
     tracked_wallets: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    tracked_coins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["bitcoin", "ethereum"])
+    tracked_coins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["solana"])
     reddit_subreddits: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["cryptocurrency", "bitcoin", "ethereum"]
     )
@@ -52,12 +52,13 @@ class Settings(BaseSettings):
     smart_money_qualified_threshold: float = 75
     wallet_analysis_interval_seconds: int = 86400
     wallet_scoring_interval_seconds: int = 86400
-    wallet_discovery_interval_seconds: int = 3600
-    wallet_discovery_batch_size: int = 100
-    wallet_discovery_transfer_limit: int = 100
-    wallet_discovery_min_transactions: int = 3
     wallet_auto_track_threshold: float = 75
     wallet_auto_track_limit: int = 100
+    wallet_monitor_interval_seconds: int = 120
+    wallet_monitor_transfer_limit: int = 50
+    wallet_reputation_interval_seconds: int = 3600
+    token_quality_interval_seconds: int = 3600
+    daily_performance_report_interval_seconds: int = 86400
     smart_money_signal_interval_seconds: int = 300
     wallet_analysis_batch_size: int = 500
     smart_money_monitor_window_minutes: int = 10
@@ -199,10 +200,11 @@ class Settings(BaseSettings):
         "news_refresh_seconds",
         "wallet_analysis_interval_seconds",
         "wallet_scoring_interval_seconds",
-        "wallet_discovery_interval_seconds",
-        "wallet_discovery_batch_size",
-        "wallet_discovery_transfer_limit",
-        "wallet_discovery_min_transactions",
+        "wallet_monitor_interval_seconds",
+        "wallet_monitor_transfer_limit",
+        "wallet_reputation_interval_seconds",
+        "token_quality_interval_seconds",
+        "daily_performance_report_interval_seconds",
         "wallet_auto_track_limit",
         "smart_money_signal_interval_seconds",
         "wallet_analysis_batch_size",
@@ -381,7 +383,7 @@ class Settings(BaseSettings):
             return self
         required = {
             "DATABASE_URL": self.database_url if self.database_url.startswith(("postgresql+asyncpg://", "postgresql://")) else None,
-            "BLOCKCHAIN_API_KEY": self.moralis_api_key or self.etherscan_api_key,
+            "BLOCKCHAIN_API_KEY": self.moralis_api_key,
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_CHAT_ID": self.telegram_chat_id,
         }

@@ -17,7 +17,7 @@ async def ready(response: Response) -> dict[str, object]:
     database_ok = await check_database(engine)
     settings = get_settings()
     required_credentials = {
-        "blockchain": settings.moralis_api_key or settings.etherscan_api_key,
+        "blockchain": settings.moralis_api_key,
         "telegram": settings.telegram_bot_token and settings.telegram_chat_id,
     }
     optional_credentials = {

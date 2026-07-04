@@ -1,8 +1,8 @@
 # Nexora DeFi MVP
 
-Telegram-first Smart Money Intelligence Platform.
+Telegram-first Solana Smart Money Intelligence Platform.
 
-Nexora identifies promising crypto tokens by tracking high-quality wallets before broader market attention arrives. The MVP keeps the production foundation, Smart Money intelligence, basic token growth/momentum metrics, basic risk filters, and AI analyst reports for Telegram-ready summaries.
+Nexora identifies promising Solana opportunities by monitoring curated elite wallets before broader market attention arrives. The MVP keeps the production foundation, Smart Money intelligence, basic token growth/momentum metrics, basic risk filters, and AI analyst reports for Telegram-ready summaries.
 
 ## Architecture
 
@@ -13,11 +13,11 @@ External APIs -> collectors -> normalized records -> SQLAlchemy repository -> da
                          |
                  FastAPI lifecycle
 
-transactions -> wallet positions -> wallet metrics -> wallet scores
+curated Solana wallets -> wallet activity -> wallet reputation
                                              |
 qualified wallet activity -> Smart Money detector -> smart_money_signals
                                              |
-known token contracts -> transfer streams -> wallet discovery -> auto-tracked wallets
+Solana wallet monitor -> token quality -> conviction score -> Telegram alerts
                                              |
 price + liquidity history -> growth/momentum metrics
                                              |
@@ -29,7 +29,7 @@ structured Smart Money evidence -> AI analyst -> Telegram-ready reports
 ## Kept Modules
 
 - Foundation: FastAPI, async database sessions, Alembic, logging, configuration, scheduler, collectors, repository, health checks, and tests.
-- Smart Money Intelligence: wallet tracking, wallet profiling, scoring, elite wallet detection, whale/cluster style signal detection, and Smart Money signal APIs.
+- Smart Money Intelligence: curated Solana wallet tracking, wallet activity monitoring, wallet reputation scoring, token quality scoring, conviction scoring, and Smart Money signal APIs.
 - Token Support Metrics: token growth, liquidity, and basic momentum metrics used to support Smart Money interpretation.
 - Basic Risk Filter: liquidity, holder concentration, Smart Money exit, volatility, age, and lightweight contract availability checks.
 - AI Analyst: evidence-only Smart Money reports with Telegram formatting.
@@ -54,7 +54,7 @@ For local development, missing API credentials cause affected collectors to log 
 Required for production Smart Money MVP startup:
 
 - `DATABASE_URL`
-- `MORALIS_API_KEY` or `ETHERSCAN_API_KEY`
+- `MORALIS_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
@@ -99,15 +99,26 @@ The migration `9f0b7c1d2e34_refactor_to_smart_money_mvp.py` removes non-MVP tabl
 - `GET /analyst/token/{token_id}`
 - `GET /analyst/watchlist`
 - `GET /analyst/smart-money`
+- `POST /admin/wallets/add`
+- `POST /admin/wallets/remove`
+- `GET /admin/wallets`
+- `GET /admin/wallet-reputation`
+- `GET /admin/token-quality`
+- `GET /admin/conviction`
+- `GET /admin/wallet-activity`
+- `GET /admin/signals`
 
 ## Scheduled Jobs
 
 The scheduler now runs only MVP jobs:
 
-- Blockchain, market, social, and news refreshes. Moralis is used for wallet token transfers when `MORALIS_API_KEY` is present; otherwise the collector falls back to Etherscan.
+- Solana wallet monitoring, market, social, and news refreshes. Moralis is used for Solana wallet activity when `MORALIS_API_KEY` is present.
 - Wallet analysis
 - Wallet scoring
-- Automatic wallet discovery from known token contract transfer streams
+- Curated Solana wallet monitoring
+- Solana wallet reputation scoring
+- Solana token quality scoring
+- Solana conviction-gated alert generation
 - Smart Money signal generation
 - Token rapid change, growth, and momentum metrics
 - Risk volatility, risk score, and risk event checks
@@ -176,4 +187,4 @@ Railway uses the committed `railway.json`:
 - Build command: `pip install -e .`
 - Start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
-Set production secrets in Railway Variables, never in Git. Required production values include `APP_ENV=production`, `DATABASE_URL`, a blockchain API key, and Telegram credentials. Market, social, news, and OpenAI analyst credentials are optional enrichments.
+Set production secrets in Railway Variables, never in Git. Required production values include `APP_ENV=production`, `DATABASE_URL`, `MORALIS_API_KEY`, and Telegram credentials. Market, social, news, and OpenAI analyst credentials are optional enrichments.

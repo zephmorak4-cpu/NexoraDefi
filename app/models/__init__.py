@@ -11,6 +11,7 @@ from app.models.entities import (
 )
 from app.models.risk import RiskEvent, TokenRiskMetric
 from app.models.smart_money import SmartMoneySignal, WalletMetric, WalletPosition, WalletScore
+from app.models.solana_smart_money import TokenQuality, TrackedWallet, WalletActivity
 from app.models.token_intelligence import MomentumMetric, TokenGrowthMetric
 
 __all__ = [
@@ -31,4 +32,7 @@ __all__ = [
     "MomentumMetric",
     "TokenRiskMetric",
     "RiskEvent",
+    "TrackedWallet",
+    "WalletActivity",
+    "TokenQuality",
 ]

@@ -7,7 +7,6 @@ from app.jobs.tasks import (
     analyze_token_momentum,
     detect_rapid_token_changes,
     detect_critical_risk_events,
-    discover_wallets,
     generate_analyst_reports,
     generate_smart_money_signals,
     recalculate_token_risk_scores,
@@ -20,6 +19,12 @@ from app.jobs.tasks import (
     send_smart_money_alerts,
     update_risk_volatility,
 )
+from app.smart_money.wallet_jobs import (
+    generate_solana_smart_money_signals,
+    monitor_solana_wallets,
+    recalculate_solana_token_quality,
+    recalculate_solana_wallet_reputation,
+)
 
 
 def build_scheduler(settings: Settings) -> AsyncIOScheduler:
@@ -31,8 +36,11 @@ def build_scheduler(settings: Settings) -> AsyncIOScheduler:
         (refresh_news, "news", settings.news_refresh_seconds),
         (analyze_wallets, "wallet_analysis", settings.wallet_analysis_interval_seconds),
         (recalculate_wallet_scores, "wallet_scoring", settings.wallet_scoring_interval_seconds),
-        (discover_wallets, "wallet_discovery", settings.wallet_discovery_interval_seconds),
-        (generate_smart_money_signals, "smart_money_signals", settings.smart_money_signal_interval_seconds),
+        (monitor_solana_wallets, "solana_wallet_monitor", settings.wallet_monitor_interval_seconds),
+        (recalculate_solana_wallet_reputation, "solana_wallet_reputation", settings.wallet_reputation_interval_seconds),
+        (recalculate_solana_token_quality, "solana_token_quality", settings.token_quality_interval_seconds),
+        (generate_solana_smart_money_signals, "solana_smart_money_signals", settings.smart_money_signal_interval_seconds),
+        (generate_smart_money_signals, "legacy_smart_money_signals", settings.smart_money_signal_interval_seconds),
         (detect_rapid_token_changes, "token_rapid_changes", settings.token_rapid_change_interval_seconds),
         (analyze_token_growth, "token_growth", settings.token_growth_interval_seconds),
         (analyze_token_momentum, "token_momentum", settings.token_momentum_interval_seconds),

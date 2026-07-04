@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.database.session import engine
 from app.jobs.scheduler import build_scheduler
+from app.smart_money.wallet_api import router as solana_wallet_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -36,3 +37,4 @@ app.include_router(smart_money_router)
 app.include_router(token_intelligence_router)
 app.include_router(risk_router)
 app.include_router(analyst_router)
+app.include_router(solana_wallet_router)

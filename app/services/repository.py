@@ -32,7 +32,7 @@ class DataRepository:
         await self.session.flush()
         return token
 
-    async def get_or_create_wallet(self, address: str, chain: str = "ethereum") -> Wallet:
+    async def get_or_create_wallet(self, address: str, chain: str = "solana") -> Wallet:
         address = address.lower()
         wallet = await self.session.scalar(
             select(Wallet).where(Wallet.chain == chain, Wallet.wallet_address == address)

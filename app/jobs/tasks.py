@@ -9,7 +9,6 @@ from app.database.session import SessionFactory
 from app.services.risk import RiskAnalyzer, RiskEventDetector
 from app.services.smart_money import SmartMoneyDetector, SmartMoneyScorer, WalletAnalyzer
 from app.services.token_intelligence import MomentumAnalyzer, TokenGrowthAnalyzer
-from app.services.wallet_discovery import WalletDiscoveryService
 from app.telegram.notifier import TelegramNotifier
 
 logger = get_logger(__name__)
@@ -65,20 +64,6 @@ async def recalculate_wallet_scores() -> int:
             await session.rollback()
             logger.exception("wallet_scoring_failed")
             raise
-
-
-async def discover_wallets() -> int:
-    settings = get_settings()
-    async with SessionFactory() as session:
-        discovery = WalletDiscoveryService(session, settings)
-        try:
-            return await discovery.discover()
-        except Exception:
-            await session.rollback()
-            logger.exception("wallet_discovery_failed")
-            raise
-        finally:
-            await discovery.close()
 
 
 async def generate_smart_money_signals() -> int:

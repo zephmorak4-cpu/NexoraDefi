@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analyst.analyst_engine import AnalystEngine
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.models import SmartMoneySignal, Token
+from app.models import Alert, SmartMoneySignal, Token
 from app.telegram.client import TelegramClient
 
 logger = get_logger(__name__)
@@ -38,6 +38,24 @@ class TelegramNotifier:
             logger.info("telegram_skipped", reason="missing_token_or_chat_id")
             return 0
         since = since or datetime.now(timezone.utc) - timedelta(seconds=self.settings.telegram_alert_interval_seconds)
+        solana_alerts = list(
+            (
+                await self.session.scalars(
+                    select(Alert)
+                    .where(Alert.created_at >= since, Alert.alert_type.like("solana:%"))
+                    .order_by(Alert.created_at.desc(), Alert.id.desc())
+                    .limit(limit)
+                )
+            ).all()
+        )
+        sent = 0
+        for alert in solana_alerts:
+            await self._client().send_message(self.settings.telegram_chat_id or 0, alert.message)
+            sent += 1
+        if sent:
+            logger.info("telegram_solana_smart_money_alerts_sent", alerts=sent)
+            return sent
+
         signals = list(
             (
                 await self.session.scalars(
@@ -49,7 +67,6 @@ class TelegramNotifier:
             ).all()
         )
         engine = AnalystEngine(self.session, self.settings)
-        sent = 0
         for signal in signals:
             report = await engine.token_report(signal.token_id, output_format="telegram")
             await self._client().send_message(self.settings.telegram_chat_id or 0, report.content)

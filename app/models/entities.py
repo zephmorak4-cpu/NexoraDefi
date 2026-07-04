@@ -19,7 +19,7 @@ class Token(TimestampMixin, Base):
     blockchain_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str] = mapped_column(String(255))
-    chain: Mapped[str] = mapped_column(String(32), default="ethereum")
+    chain: Mapped[str] = mapped_column(String(32), default="solana")
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -32,7 +32,7 @@ class Wallet(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     wallet_address: Mapped[str] = mapped_column(String(128))
-    chain: Mapped[str] = mapped_column(String(32), default="ethereum")
+    chain: Mapped[str] = mapped_column(String(32), default="solana")
 
 
 class Transaction(Base):
