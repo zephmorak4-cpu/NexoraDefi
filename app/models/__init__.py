@@ -9,6 +9,7 @@ from app.models.entities import (
     User,
     Wallet,
 )
+from app.models.discovery import CandidateHistory, CandidateWallet
 from app.models.risk import RiskEvent, TokenRiskMetric
 from app.models.smart_money import SmartMoneySignal, WalletMetric, WalletPosition, WalletScore
 from app.models.solana_smart_money import TokenQuality, TrackedWallet, WalletActivity
@@ -35,4 +36,6 @@ __all__ = [
     "TrackedWallet",
     "WalletActivity",
     "TokenQuality",
+    "CandidateWallet",
+    "CandidateHistory",
 ]

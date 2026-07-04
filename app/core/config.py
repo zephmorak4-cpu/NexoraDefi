@@ -61,6 +61,26 @@ class Settings(BaseSettings):
     daily_performance_report_interval_seconds: int = 86400
     smart_money_signal_interval_seconds: int = 300
     wallet_analysis_batch_size: int = 500
+    candidate_discovery_interval_seconds: int = 300
+    candidate_scoring_interval_seconds: int = 3600
+    candidate_promotion_interval_seconds: int = 86400
+    elite_demotion_interval_seconds: int = 604800
+    discovery_token_scan_limit: int = 25
+    discovery_transfer_limit: int = 50
+    discovery_min_usd_value: float = 1000
+    discovery_blacklisted_wallets: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    candidate_transaction_size_weight: float = 0.25
+    candidate_consistency_weight: float = 0.20
+    candidate_early_entry_weight: float = 0.20
+    candidate_token_quality_weight: float = 0.15
+    candidate_holding_behaviour_weight: float = 0.10
+    candidate_network_influence_weight: float = 0.10
+    candidate_observation_days: int = 7
+    candidate_promotion_score: float = 85
+    candidate_promotion_reputation: float = 85
+    candidate_historical_accuracy_threshold: float = 70
+    candidate_max_suspicious_score: float = 20
+    candidate_demotion_reputation: float = 65
     smart_money_monitor_window_minutes: int = 10
     smart_money_cluster_window_hours: int = 24
     smart_money_cluster_min_wallets: int = 3
@@ -186,7 +206,7 @@ class Settings(BaseSettings):
     drift_alert_threshold: float = 30
     calibration_error_alert_threshold: float = 20
 
-    @field_validator("tracked_wallets", "tracked_coins", "reddit_subreddits", mode="before")
+    @field_validator("tracked_wallets", "tracked_coins", "reddit_subreddits", "discovery_blacklisted_wallets", mode="before")
     @classmethod
     def parse_csv(cls, value: object) -> object:
         if isinstance(value, str):
@@ -208,6 +228,13 @@ class Settings(BaseSettings):
         "wallet_auto_track_limit",
         "smart_money_signal_interval_seconds",
         "wallet_analysis_batch_size",
+        "candidate_discovery_interval_seconds",
+        "candidate_scoring_interval_seconds",
+        "candidate_promotion_interval_seconds",
+        "elite_demotion_interval_seconds",
+        "discovery_token_scan_limit",
+        "discovery_transfer_limit",
+        "candidate_observation_days",
         "smart_money_monitor_window_minutes",
         "smart_money_cluster_window_hours",
         "smart_money_cluster_min_wallets",
@@ -271,6 +298,22 @@ class Settings(BaseSettings):
             left > right for left, right in zip(thresholds, thresholds[1:])
         ):
             raise ValueError("Smart Money tier thresholds must descend within 0-100")
+        return self
+
+    @model_validator(mode="after")
+    def validate_candidate_discovery_configuration(self) -> "Settings":
+        weights = self.candidate_score_weights
+        if any(weight < 0 for weight in weights.values()) or sum(weights.values()) <= 0:
+            raise ValueError("Candidate score weights must be non-negative with a positive total")
+        bounded = (
+            self.candidate_promotion_score,
+            self.candidate_promotion_reputation,
+            self.candidate_historical_accuracy_threshold,
+            self.candidate_max_suspicious_score,
+            self.candidate_demotion_reputation,
+        )
+        if not all(0 <= value <= 100 for value in bounded):
+            raise ValueError("Candidate discovery thresholds must be within 0-100")
         return self
 
     @model_validator(mode="after")
@@ -406,6 +449,17 @@ class Settings(BaseSettings):
             "risk_management": self.smart_money_risk_management_weight,
             "experience": self.smart_money_experience_weight,
             "recent_performance": self.smart_money_recent_performance_weight,
+        }
+
+    @property
+    def candidate_score_weights(self) -> dict[str, float]:
+        return {
+            "transaction_size": self.candidate_transaction_size_weight,
+            "consistency": self.candidate_consistency_weight,
+            "early_entry": self.candidate_early_entry_weight,
+            "token_quality": self.candidate_token_quality_weight,
+            "holding_behaviour": self.candidate_holding_behaviour_weight,
+            "network_influence": self.candidate_network_influence_weight,
         }
 
     @property

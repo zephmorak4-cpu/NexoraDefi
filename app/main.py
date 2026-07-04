@@ -10,6 +10,7 @@ from app.api.token_intelligence import router as token_intelligence_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.database.session import engine
+from app.discovery.discovery_api import router as discovery_router
 from app.jobs.scheduler import build_scheduler
 from app.smart_money.wallet_api import router as solana_wallet_router
 
@@ -38,3 +39,4 @@ app.include_router(token_intelligence_router)
 app.include_router(risk_router)
 app.include_router(analyst_router)
 app.include_router(solana_wallet_router)
+app.include_router(discovery_router)

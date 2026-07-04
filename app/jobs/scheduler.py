@@ -1,6 +1,12 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import Settings
+from app.discovery.discovery_jobs import (
+    discover_candidate_wallets,
+    evaluate_candidate_promotions,
+    evaluate_elite_demotions,
+    update_candidate_scores,
+)
 from app.jobs.tasks import (
     analyze_wallets,
     analyze_token_growth,
@@ -36,6 +42,10 @@ def build_scheduler(settings: Settings) -> AsyncIOScheduler:
         (refresh_news, "news", settings.news_refresh_seconds),
         (analyze_wallets, "wallet_analysis", settings.wallet_analysis_interval_seconds),
         (recalculate_wallet_scores, "wallet_scoring", settings.wallet_scoring_interval_seconds),
+        (discover_candidate_wallets, "candidate_wallet_discovery", settings.candidate_discovery_interval_seconds),
+        (update_candidate_scores, "candidate_wallet_scoring", settings.candidate_scoring_interval_seconds),
+        (evaluate_candidate_promotions, "candidate_wallet_promotions", settings.candidate_promotion_interval_seconds),
+        (evaluate_elite_demotions, "elite_wallet_demotions", settings.elite_demotion_interval_seconds),
         (monitor_solana_wallets, "solana_wallet_monitor", settings.wallet_monitor_interval_seconds),
         (recalculate_solana_wallet_reputation, "solana_wallet_reputation", settings.wallet_reputation_interval_seconds),
         (recalculate_solana_token_quality, "solana_token_quality", settings.token_quality_interval_seconds),

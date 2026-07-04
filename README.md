@@ -15,6 +15,8 @@ External APIs -> collectors -> normalized records -> SQLAlchemy repository -> da
 
 curated Solana wallets -> wallet activity -> wallet reputation
                                              |
+Solana activity scanner -> candidate wallets -> observation -> promotion
+                                             |
 qualified wallet activity -> Smart Money detector -> smart_money_signals
                                              |
 Solana wallet monitor -> token quality -> conviction score -> Telegram alerts
@@ -30,6 +32,7 @@ structured Smart Money evidence -> AI analyst -> Telegram-ready reports
 
 - Foundation: FastAPI, async database sessions, Alembic, logging, configuration, scheduler, collectors, repository, health checks, and tests.
 - Smart Money Intelligence: curated Solana wallet tracking, wallet activity monitoring, wallet reputation scoring, token quality scoring, conviction scoring, and Smart Money signal APIs.
+- Smart Wallet Discovery: Solana candidate wallet discovery, observation, scoring, classification, promotion, and demotion. Candidate wallets never generate Telegram alerts.
 - Token Support Metrics: token growth, liquidity, and basic momentum metrics used to support Smart Money interpretation.
 - Basic Risk Filter: liquidity, holder concentration, Smart Money exit, volatility, age, and lightweight contract availability checks.
 - AI Analyst: evidence-only Smart Money reports with Telegram formatting.
@@ -107,6 +110,12 @@ The migration `9f0b7c1d2e34_refactor_to_smart_money_mvp.py` removes non-MVP tabl
 - `GET /admin/conviction`
 - `GET /admin/wallet-activity`
 - `GET /admin/signals`
+- `GET /admin/candidates`
+- `GET /admin/candidate/{id}`
+- `POST /admin/promote`
+- `POST /admin/reject`
+- `GET /admin/elite-wallets`
+- `GET /admin/discovery-stats`
 
 ## Scheduled Jobs
 
@@ -115,6 +124,10 @@ The scheduler now runs only MVP jobs:
 - Solana wallet monitoring, market, social, and news refreshes. Moralis is used for Solana wallet activity when `MORALIS_API_KEY` is present.
 - Wallet analysis
 - Wallet scoring
+- Candidate wallet discovery every 5 minutes
+- Candidate scoring and reputation refresh hourly
+- Candidate promotion review daily
+- Elite wallet demotion review weekly
 - Curated Solana wallet monitoring
 - Solana wallet reputation scoring
 - Solana token quality scoring
@@ -134,6 +147,23 @@ The MVP uses Telegram's HTTP Bot API directly. Configure `TELEGRAM_BOT_TOKEN` an
 - Daily Smart Money summaries
 
 The supported command vocabulary for the bot UX is `/start`, `/help`, `/signals`, `/watchlist`, `/settings`, and `/latest`; command handling can be attached through a webhook or polling process without changing the intelligence core.
+
+## Smart Wallet Discovery
+
+The discovery engine scans Solana activity and places promising wallets into a candidate pool. Candidate wallets are observation-only: they are scored and classified, but they do not trigger Telegram alerts.
+
+Candidate scoring uses configurable weights:
+
+- Transaction Size: 25%
+- Consistency: 20%
+- Early Entry: 20%
+- Token Quality: 15%
+- Holding Behaviour: 10%
+- Network Influence: 10%
+
+Wallet classifications are informational and include Whale, High Frequency Trader, Long-Term Investor, Market Maker, Liquidity Provider, and Unknown.
+
+Promotion requires the observation period to complete, wallet reputation at or above 85, candidate score at or above 85, historical accuracy above the configured threshold, and low suspicious behaviour. If an elite wallet deteriorates, the demotion job moves it back into observation.
 
 ## AI Reports
 
