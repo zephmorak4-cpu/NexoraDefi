@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Protocol
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -30,6 +31,7 @@ class SolanaDiscoverySource:
         settings: Settings,
         dexscreener_client: AsyncAPIClient | None = None,
         moralis_client: AsyncAPIClient | None = None,
+        solana_rpc_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.settings = settings
         self.dexscreener_client = dexscreener_client or AsyncAPIClient(
@@ -43,6 +45,11 @@ class SolanaDiscoverySource:
             max_retries=settings.http_max_retries,
             headers={"accept": "application/json", "X-API-Key": settings.moralis_api_key or ""},
         )
+        self._owns_rpc_client = solana_rpc_client is None
+        self.solana_rpc_client = solana_rpc_client or httpx.AsyncClient(
+            base_url="https://api.mainnet-beta.solana.com",
+            timeout=settings.http_timeout_seconds,
+        )
 
     async def events(self) -> list[DiscoveryEvent]:
         if not self.settings.moralis_api_key:
@@ -53,16 +60,24 @@ class SolanaDiscoverySource:
         for profile in items[: self.settings.discovery_token_scan_limit]:
             if not isinstance(profile, dict) or profile.get("chainId") != "solana" or not profile.get("tokenAddress"):
                 continue
-            events.extend(await self._token_events(str(profile["tokenAddress"]), "interaction_with_trending_token"))
+            token_address = str(profile["tokenAddress"])
+            token_events = await self._token_events(token_address, "interaction_with_trending_token")
+            if not token_events:
+                token_events = await self._rpc_token_events(token_address, "interaction_with_trending_token")
+            events.extend(token_events)
         return events
 
     async def _token_events(self, token_address: str, reason: str) -> list[DiscoveryEvent]:
-        payload = await self.moralis_client.request_json(
-            "GET",
-            f"/token/mainnet/{token_address}/transfers",
-            params={"limit": self.settings.discovery_transfer_limit},
-            headers={"X-API-Key": self.settings.moralis_api_key or ""},
-        )
+        try:
+            payload = await self.moralis_client.request_json(
+                "GET",
+                f"/token/mainnet/{token_address}/transfers",
+                params={"limit": self.settings.discovery_transfer_limit},
+                headers={"X-API-Key": self.settings.moralis_api_key or ""},
+            )
+        except Exception as exc:
+            logger.info("moralis_token_transfer_discovery_unavailable", token=token_address, error=type(exc).__name__)
+            return []
         raw_items = payload.get("result", payload) if isinstance(payload, dict) else payload
         if not isinstance(raw_items, list):
             return []
@@ -73,11 +88,82 @@ class SolanaDiscoverySource:
                 events.append(event)
         return events
 
+    async def _rpc_token_events(self, token_address: str, reason: str) -> list[DiscoveryEvent]:
+        scan_addresses = [token_address]
+        scan_addresses.extend(await self._dex_pair_addresses(token_address))
+        events: list[DiscoveryEvent] = []
+        seen_wallets: set[str] = set()
+        for address in scan_addresses[:3]:
+            signatures = await self._rpc_signatures(address)
+            for signature in signatures[: self.settings.discovery_transfer_limit]:
+                for wallet in await self._rpc_transaction_signers(signature):
+                    if wallet in seen_wallets or wallet in {token_address, address}:
+                        continue
+                    seen_wallets.add(wallet)
+                    events.append(
+                        DiscoveryEvent(
+                            wallet_address=wallet,
+                            token=token_address,
+                            action="swap",
+                            amount=Decimal("0"),
+                            usd_value=None,
+                            timestamp=datetime.now(timezone.utc),
+                            reason=reason,
+                        )
+                    )
+        return events
+
+    async def _dex_pair_addresses(self, token_address: str) -> list[str]:
+        payload = await self.dexscreener_client.request_json("GET", f"/token-pairs/v1/solana/{token_address}")
+        pairs = payload if isinstance(payload, list) else []
+        return [
+            str(pair["pairAddress"])
+            for pair in pairs
+            if isinstance(pair, dict) and pair.get("chainId") == "solana" and pair.get("pairAddress")
+        ]
+
+    async def _rpc_signatures(self, address: str) -> list[str]:
+        response = await self.solana_rpc_client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [address, {"limit": self.settings.discovery_transfer_limit}],
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("result", []) if isinstance(payload, dict) else []
+        return [str(item["signature"]) for item in result if isinstance(item, dict) and item.get("signature")]
+
+    async def _rpc_transaction_signers(self, signature: str) -> list[str]:
+        response = await self.solana_rpc_client.post(
+            "/",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTransaction",
+                "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, dict):
+            return []
+        account_keys = (((result.get("transaction") or {}).get("message") or {}).get("accountKeys") or [])
+        signers = []
+        for account in account_keys:
+            if isinstance(account, dict) and account.get("signer") and account.get("pubkey"):
+                signers.append(str(account["pubkey"]))
+        return signers
+
     def _passes_initial_filters(self, event: DiscoveryEvent) -> bool:
         return bool(
             event.wallet_address
             and event.wallet_address not in self.settings.discovery_blacklisted_wallets
-            and (event.usd_value or Decimal("0")) >= Decimal(str(self.settings.discovery_min_usd_value))
+            and (event.usd_value is None or event.usd_value >= Decimal(str(self.settings.discovery_min_usd_value)))
         )
 
     @classmethod
@@ -112,6 +198,8 @@ class SolanaDiscoverySource:
     async def close(self) -> None:
         await self.dexscreener_client.close()
         await self.moralis_client.close()
+        if self._owns_rpc_client:
+            await self.solana_rpc_client.aclose()
 
 
 class DiscoveryEngine:

@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from json import loads as json_loads
 
 import httpx
 from sqlalchemy import select
@@ -10,6 +11,8 @@ from app.discovery import discovery_api
 from app.discovery.candidate_scoring import CandidateScoringEngine
 from app.discovery.candidate_wallet import DiscoveryEvent
 from app.discovery.discovery_engine import DiscoveryEngine
+from app.discovery.discovery_engine import SolanaDiscoverySource
+from app.services.http import AsyncAPIClient
 from app.discovery.wallet_classifier import WalletClassifier
 from app.discovery.wallet_promotion import WalletPromotionService
 from app.main import app
@@ -43,6 +46,59 @@ async def test_discovery_engine_adds_candidate_without_tracking_or_alerting(db_s
     assert candidate.wallet_address == "candidate-sol-wallet"
     assert candidate.status == "observing"
     assert await db_session.scalar(select(TrackedWallet)) is None
+
+
+async def test_discovery_source_falls_back_to_solana_rpc_when_moralis_token_transfers_404():
+    def dex_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token-profiles/latest/v1":
+            return httpx.Response(
+                200,
+                json=[{"chainId": "solana", "tokenAddress": "TokenMint", "url": "https://dexscreener.com/solana/token"}],
+            )
+        assert request.url.path == "/token-pairs/v1/solana/TokenMint"
+        return httpx.Response(200, json=[{"chainId": "solana", "pairAddress": "PairAddress"}])
+
+    def moralis_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "not found"})
+
+    def rpc_handler(request: httpx.Request) -> httpx.Response:
+        body = json_loads(request.content)
+        if body["method"] == "getSignaturesForAddress":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "result": [{"signature": "sig-1"}], "id": 1})
+        assert body["method"] == "getTransaction"
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "transaction": {
+                        "message": {
+                            "accountKeys": [
+                                {"pubkey": "CandidateWallet111", "signer": True, "writable": True},
+                                {"pubkey": "TokenMint", "signer": False, "writable": False},
+                            ]
+                        }
+                    }
+                },
+            },
+        )
+
+    dex_http = httpx.AsyncClient(base_url="https://api.dexscreener.com", transport=httpx.MockTransport(dex_handler))
+    moralis_http = httpx.AsyncClient(base_url="https://solana-gateway.moralis.io", transport=httpx.MockTransport(moralis_handler))
+    rpc_http = httpx.AsyncClient(base_url="https://api.mainnet-beta.solana.com", transport=httpx.MockTransport(rpc_handler))
+    source = SolanaDiscoverySource(
+        Settings(moralis_api_key="test-key", discovery_token_scan_limit=1, discovery_transfer_limit=1),
+        dexscreener_client=AsyncAPIClient("https://api.dexscreener.com", client=dex_http),
+        moralis_client=AsyncAPIClient("https://solana-gateway.moralis.io", client=moralis_http, max_retries=0),
+        solana_rpc_client=rpc_http,
+    )
+
+    events = await source.events()
+
+    assert events[0].wallet_address == "CandidateWallet111"
+    assert events[0].token == "TokenMint"
+    await source.close()
 
 
 async def test_candidate_scoring_and_classification(db_session):
