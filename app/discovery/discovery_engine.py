@@ -57,14 +57,14 @@ class SolanaDiscoverySource:
         profiles = await self.dexscreener_client.request_json("GET", "/token-profiles/latest/v1")
         items = profiles if isinstance(profiles, list) else [profiles] if isinstance(profiles, dict) else []
         events: list[DiscoveryEvent] = []
-        for profile in items[: self.settings.discovery_token_scan_limit]:
-            if not isinstance(profile, dict) or profile.get("chainId") != "solana" or not profile.get("tokenAddress"):
-                continue
+        solana_profiles = [
+            profile
+            for profile in items
+            if isinstance(profile, dict) and profile.get("chainId") == "solana" and profile.get("tokenAddress")
+        ]
+        for profile in solana_profiles[: self.settings.discovery_token_scan_limit]:
             token_address = str(profile["tokenAddress"])
-            token_events = await self._token_events(token_address, "interaction_with_trending_token")
-            if not token_events:
-                token_events = await self._rpc_token_events(token_address, "interaction_with_trending_token")
-            events.extend(token_events)
+            events.extend(await self._rpc_token_events(token_address, "interaction_with_trending_token"))
         return events
 
     async def _token_events(self, token_address: str, reason: str) -> list[DiscoveryEvent]:
@@ -114,7 +114,11 @@ class SolanaDiscoverySource:
         return events
 
     async def _dex_pair_addresses(self, token_address: str) -> list[str]:
-        payload = await self.dexscreener_client.request_json("GET", f"/token-pairs/v1/solana/{token_address}")
+        try:
+            payload = await self.dexscreener_client.request_json("GET", f"/token-pairs/v1/solana/{token_address}")
+        except Exception as exc:
+            logger.info("dex_pair_lookup_unavailable", token=token_address, error=type(exc).__name__)
+            return []
         pairs = payload if isinstance(payload, list) else []
         return [
             str(pair["pairAddress"])
@@ -123,40 +127,52 @@ class SolanaDiscoverySource:
         ]
 
     async def _rpc_signatures(self, address: str) -> list[str]:
-        response = await self.solana_rpc_client.post(
-            "/",
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getSignaturesForAddress",
-                "params": [address, {"limit": self.settings.discovery_transfer_limit}],
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = await self.solana_rpc_client.post(
+                "/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getSignaturesForAddress",
+                    "params": [address, {"limit": self.settings.discovery_transfer_limit}],
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.info("solana_rpc_signatures_unavailable", address=address, error=type(exc).__name__)
+            return []
         result = payload.get("result", []) if isinstance(payload, dict) else []
         return [str(item["signature"]) for item in result if isinstance(item, dict) and item.get("signature")]
 
     async def _rpc_transaction_signers(self, signature: str) -> list[str]:
-        response = await self.solana_rpc_client.post(
-            "/",
-            json={
+        try:
+            response = await self.solana_rpc_client.post(
+                "/",
+                json={
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "getTransaction",
-                "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+                "params": [signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}],
             },
         )
-        response.raise_for_status()
-        payload = response.json()
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.info("solana_rpc_transaction_unavailable", signature=signature, error=type(exc).__name__)
+            return []
         result = payload.get("result") if isinstance(payload, dict) else None
         if not isinstance(result, dict):
             return []
-        account_keys = (((result.get("transaction") or {}).get("message") or {}).get("accountKeys") or [])
+        message = ((result.get("transaction") or {}).get("message") or {})
+        account_keys = message.get("accountKeys") or []
+        required_signatures = ((message.get("header") or {}).get("numRequiredSignatures") or 1)
         signers = []
-        for account in account_keys:
-            if isinstance(account, dict) and account.get("signer") and account.get("pubkey"):
+        for account in account_keys[:required_signatures]:
+            if isinstance(account, dict) and account.get("pubkey"):
                 signers.append(str(account["pubkey"]))
+            elif isinstance(account, str):
+                signers.append(account)
         return signers
 
     def _passes_initial_filters(self, event: DiscoveryEvent) -> bool:

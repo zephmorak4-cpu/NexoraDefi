@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     candidate_scoring_interval_seconds: int = 3600
     candidate_promotion_interval_seconds: int = 86400
     elite_demotion_interval_seconds: int = 604800
-    discovery_token_scan_limit: int = 25
-    discovery_transfer_limit: int = 50
+    discovery_token_scan_limit: int = 3
+    discovery_transfer_limit: int = 3
     discovery_min_usd_value: float = 1000
     discovery_blacklisted_wallets: Annotated[list[str], NoDecode] = Field(default_factory=list)
     candidate_transaction_size_weight: float = 0.25
