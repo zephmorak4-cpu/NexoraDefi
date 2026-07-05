@@ -33,17 +33,6 @@ async def update_candidate_scores() -> int:
             raise
 
 
-async def evaluate_candidate_promotions() -> int:
-    settings = get_settings()
-    async with SessionFactory() as session:
-        try:
-            return await WalletPromotionService(session, settings).evaluate_promotions()
-        except Exception:
-            await session.rollback()
-            logger.exception("candidate_wallet_promotion_failed")
-            raise
-
-
 async def evaluate_elite_demotions() -> int:
     settings = get_settings()
     async with SessionFactory() as session:
@@ -53,4 +42,3 @@ async def evaluate_elite_demotions() -> int:
             await session.rollback()
             logger.exception("elite_wallet_demotion_failed")
             raise
-

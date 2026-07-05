@@ -33,6 +33,7 @@ structured Smart Money evidence -> AI analyst -> Telegram-ready reports
 - Foundation: FastAPI, async database sessions, Alembic, logging, configuration, scheduler, collectors, repository, health checks, and tests.
 - Smart Money Intelligence: curated Solana wallet tracking, wallet activity monitoring, wallet reputation scoring, token quality scoring, conviction scoring, and Smart Money signal APIs.
 - Smart Wallet Discovery: Solana candidate wallet discovery, observation, scoring, classification, promotion, and demotion. Candidate wallets never generate Telegram alerts.
+- Wallet Intelligence Review: candidate wallet reports, global rankings, PDF export, Telegram completion summaries, and manual administrator approval. AI never auto-approves wallets.
 - Token Support Metrics: token growth, liquidity, and basic momentum metrics used to support Smart Money interpretation.
 - Basic Risk Filter: liquidity, holder concentration, Smart Money exit, volatility, age, and lightweight contract availability checks.
 - AI Analyst: evidence-only Smart Money reports with Telegram formatting.
@@ -116,6 +117,12 @@ The migration `9f0b7c1d2e34_refactor_to_smart_money_mvp.py` removes non-MVP tabl
 - `POST /admin/reject`
 - `GET /admin/elite-wallets`
 - `GET /admin/discovery-stats`
+- `GET /admin/reports`
+- `GET /admin/rankings`
+- `GET /admin/wallet/{id}`
+- `POST /admin/approve-wallet`
+- `POST /admin/reject-wallet`
+- `POST /admin/needs-observation`
 
 ## Scheduled Jobs
 
@@ -126,7 +133,6 @@ The scheduler now runs only MVP jobs:
 - Wallet scoring
 - Candidate wallet discovery every 5 minutes
 - Candidate scoring and reputation refresh hourly
-- Candidate promotion review daily
 - Elite wallet demotion review weekly
 - Curated Solana wallet monitoring
 - Solana wallet reputation scoring
@@ -163,7 +169,15 @@ Candidate scoring uses configurable weights:
 
 Wallet classifications are informational and include Whale, High Frequency Trader, Long-Term Investor, Market Maker, Liquidity Provider, and Unknown.
 
-Promotion requires the observation period to complete, wallet reputation at or above 85, candidate score at or above 85, historical accuracy above the configured threshold, and low suspicious behaviour. If an elite wallet deteriorates, the demotion job moves it back into observation.
+Administrator approval should require the observation period to complete, wallet reputation at or above 85, candidate score at or above 85, historical accuracy above the configured threshold, and low suspicious behaviour. If an elite wallet deteriorates, the demotion job moves it back into observation.
+
+## Wallet Intelligence Review
+
+Every discovered candidate can be analyzed through the Wallet Intelligence Report Engine. Reports include wallet identity, trading behaviour, holding behaviour, trading style, copy-performance simulation, reputation, conviction, token preferences, risk, an executive summary, and an administrator recommendation.
+
+The AI recommendation is advisory only. It can recommend Strong Elite Candidate, Promising Candidate, Needs More Observation, or Reject, but it never approves a wallet. Administrator review is recorded in `wallet_review` with status Pending, Approved, Rejected, or Needs Observation.
+
+Only `POST /admin/approve-wallet` or the legacy manual `/admin/promote` alias can move a candidate into `tracked_wallets` and mark it `approved_for_signals`. Candidate wallets and unapproved reports never generate Smart Money alerts.
 
 ## AI Reports
 

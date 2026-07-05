@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.database.session import SessionFactory
 from app.discovery.wallet_history import WalletHistoryService
 from app.discovery.wallet_promotion import WalletPromotionService
+from app.intelligence.wallet_review import WalletReviewService
 from app.models import CandidateHistory, CandidateWallet, TrackedWallet
 
 router = APIRouter(prefix="/admin", tags=["wallet-discovery"])
@@ -82,10 +83,7 @@ async def promote(payload: CandidateActionRequest) -> dict[str, bool]:
         wallet = await session.get(CandidateWallet, payload.candidate_id)
         if wallet is None:
             raise HTTPException(status_code=404, detail="candidate wallet not found")
-        await WalletPromotionService(session, get_settings()).promote(wallet)
-        if payload.notes:
-            wallet.notes = payload.notes
-        await session.commit()
+        await WalletReviewService(session, get_settings()).approve(wallet.id, reviewed_by="admin", notes=payload.notes)
         return {"promoted": True}
 
 
