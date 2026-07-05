@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from app.core.logging import get_logger
@@ -32,6 +33,30 @@ class TelegramClient:
         )
         if not payload.get("ok", False):
             logger.warning("telegram_send_failed", description=payload.get("description"))
+        return payload
+
+    async def send_document(
+        self,
+        chat_id: int,
+        document_path: str | Path,
+        caption: str | None = None,
+        parse_mode: str = "Markdown",
+    ) -> dict[str, Any]:
+        path = Path(document_path)
+        with path.open("rb") as file_handle:
+            response = await self.client.client.post(
+                "/sendDocument",
+                data={
+                    "chat_id": chat_id,
+                    "caption": (caption or "")[:1024],
+                    "parse_mode": parse_mode,
+                },
+                files={"document": (path.name, file_handle, "application/pdf")},
+            )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("ok", False):
+            logger.warning("telegram_document_send_failed", description=payload.get("description"))
         return payload
 
     async def close(self) -> None:

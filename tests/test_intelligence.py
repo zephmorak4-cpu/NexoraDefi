@@ -14,6 +14,8 @@ from app.intelligence.wallet_review import WalletReviewService
 from app.main import app
 from app.models import CandidateHistory, CandidateWallet, TrackedWallet, WalletReview
 from app.core.config import Settings
+from app.services.http import AsyncAPIClient
+from app.telegram.client import TelegramClient
 
 
 async def seed_candidate(db_session, score: Decimal = Decimal("90")) -> CandidateWallet:
@@ -109,6 +111,27 @@ def test_wallet_report_completed_message_is_human_readable():
     assert "7.25/100" in message
     assert "Why The Scores Look Low" in message
     assert "manual approval" in message.lower()
+
+
+async def test_telegram_client_sends_pdf_document(tmp_path):
+    pdf_path = tmp_path / "Wallet Intelligence Report.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = request.content
+        return httpx.Response(200, json={"ok": True, "result": {"document": {"file_name": pdf_path.name}}})
+
+    http_client = httpx.AsyncClient(base_url="https://api.telegram.org/bottest", transport=httpx.MockTransport(handler))
+    client = TelegramClient("test", AsyncAPIClient("https://api.telegram.org/bottest", client=http_client))
+
+    payload = await client.send_document(123, pdf_path, caption="PDF ready")
+
+    assert payload["ok"] is True
+    assert seen["path"].endswith("/sendDocument")
+    assert b"Wallet Intelligence Report.pdf" in seen["body"]
+    await client.close()
 
 
 async def test_manual_approval_creates_review_and_tracked_wallet(db_session):
