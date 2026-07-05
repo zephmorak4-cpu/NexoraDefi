@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.intelligence import intelligence_api
 from app.intelligence.wallet_export import WalletReportExporter
+from app.intelligence.wallet_message import build_wallet_report_completed_message
 from app.intelligence.wallet_ranking import WalletRankingEngine
 from app.intelligence.wallet_report import WalletReportEngine
 from app.intelligence.wallet_review import WalletReviewService
@@ -80,6 +81,34 @@ async def test_wallet_report_ranking_and_export(db_session, tmp_path):
     assert rankings[0].wallet_id == candidate.id
     assert export["summary"]["total_wallets"] == 1
     assert (tmp_path / "Wallet Intelligence Report.pdf").exists()
+
+
+def test_wallet_report_completed_message_is_human_readable():
+    export = {
+        "summary": {"total_wallets": 1},
+        "pdf_path": "/tmp/nexora-reports/Wallet Intelligence Report.pdf",
+        "rankings": [
+            {
+                "wallet_address": "Dmsjygi2eFZ2SvWZbmUduL7u24JD7BiNJ9eKvU1Ce4rB",
+                "trading_style": "Market Maker",
+                "copy_performance_score": "7.25",
+                "wallet_reputation_score": "0",
+                "historical_accuracy": "0",
+                "risk_score": "70",
+                "risk_classification": "Moderate Risk",
+                "administrator_recommendation": "Needs More Observation",
+                "recommendation_reasoning": "The wallet has too little observed history for a confident elite decision.",
+            }
+        ],
+    }
+
+    message = build_wallet_report_completed_message(export)
+
+    assert "Candidate Wallet Address" in message
+    assert "Copy Performance Score: estimated quality" in message
+    assert "7.25/100" in message
+    assert "Why The Scores Look Low" in message
+    assert "manual approval" in message.lower()
 
 
 async def test_manual_approval_creates_review_and_tracked_wallet(db_session):

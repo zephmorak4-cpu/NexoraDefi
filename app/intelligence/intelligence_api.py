@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.core.config import get_settings
 from app.database.session import SessionFactory
 from app.intelligence.wallet_export import WalletReportExporter
+from app.intelligence.wallet_message import build_wallet_report_completed_message
 from app.intelligence.wallet_ranking import WalletRankingEngine
 from app.intelligence.wallet_report import WalletReportEngine
 from app.intelligence.wallet_review import WalletReviewService
@@ -28,30 +29,9 @@ async def _send_report_complete_message(export: dict[str, object]) -> None:
     settings = get_settings()
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         return
-    rankings = export["rankings"]
-    top = rankings[:3] if isinstance(rankings, list) else []
-    lines = [
-        "*Wallet Intelligence Report Completed*",
-        f"Wallets Analysed: {export['summary']['total_wallets']}",
-        "Top Elite Candidates:",
-    ]
-    for item in top:
-        lines.append(
-            f"- {item['wallet_address']}: copy {item['copy_performance_score']}, reputation {item['wallet_reputation_score']}"
-        )
-    if top:
-        highest_copy = top[0]
-        lines.extend(
-            [
-                f"Highest Copy Performance: {highest_copy['wallet_address']}",
-                f"Highest Reputation: {max(top, key=lambda item: item['wallet_reputation_score'])['wallet_address']}",
-                f"Highest Historical Accuracy: {max(top, key=lambda item: item['historical_accuracy'])['wallet_address']}",
-            ]
-        )
-    lines.append(f"PDF Ready: {export['pdf_path']}")
     client = TelegramClient(settings.telegram_bot_token)
     try:
-        await client.send_message(settings.telegram_chat_id, "\n".join(lines))
+        await client.send_message(settings.telegram_chat_id, build_wallet_report_completed_message(export))
     finally:
         await client.close()
 
