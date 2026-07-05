@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from zipfile import ZipFile
 
 import httpx
 from sqlalchemy import select
@@ -82,12 +83,19 @@ async def test_wallet_report_ranking_and_export(db_session, tmp_path):
     }
     assert rankings[0].wallet_id == candidate.id
     assert export["summary"]["total_wallets"] == 1
+    assert (tmp_path / "Wallet Intelligence Report.docx").exists()
     assert (tmp_path / "Wallet Intelligence Report.pdf").exists()
+    with ZipFile(tmp_path / "Wallet Intelligence Report.docx") as archive:
+        document_xml = archive.read("word/document.xml").decode()
+    assert "candidate-review-wallet" in document_xml
+    assert "Wallet Identity" in document_xml
+    assert "Administrator Recommendation" in document_xml
 
 
 def test_wallet_report_completed_message_is_human_readable():
     export = {
         "summary": {"total_wallets": 1},
+        "docx_path": "/tmp/nexora-reports/Wallet Intelligence Report.docx",
         "pdf_path": "/tmp/nexora-reports/Wallet Intelligence Report.pdf",
         "rankings": [
             {
@@ -111,26 +119,29 @@ def test_wallet_report_completed_message_is_human_readable():
     assert "7.25/100" in message
     assert "Why The Scores Look Low" in message
     assert "manual approval" in message.lower()
+    assert "Word Report" in message
+    assert "every discovered wallet profile" in message
 
 
-async def test_telegram_client_sends_pdf_document(tmp_path):
-    pdf_path = tmp_path / "Wallet Intelligence Report.pdf"
-    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+async def test_telegram_client_sends_word_document(tmp_path):
+    docx_path = tmp_path / "Wallet Intelligence Report.docx"
+    docx_path.write_bytes(b"PK\x03\x04")
     seen: dict[str, object] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["body"] = request.content
-        return httpx.Response(200, json={"ok": True, "result": {"document": {"file_name": pdf_path.name}}})
+        return httpx.Response(200, json={"ok": True, "result": {"document": {"file_name": docx_path.name}}})
 
     http_client = httpx.AsyncClient(base_url="https://api.telegram.org/bottest", transport=httpx.MockTransport(handler))
     client = TelegramClient("test", AsyncAPIClient("https://api.telegram.org/bottest", client=http_client))
 
-    payload = await client.send_document(123, pdf_path, caption="PDF ready")
+    payload = await client.send_document(123, docx_path, caption="Word report ready")
 
     assert payload["ok"] is True
     assert seen["path"].endswith("/sendDocument")
-    assert b"Wallet Intelligence Report.pdf" in seen["body"]
+    assert b"Wallet Intelligence Report.docx" in seen["body"]
+    assert b"application/vnd.openxmlformats-officedocument.wordprocessingml.document" in seen["body"]
     await client.close()
 
 

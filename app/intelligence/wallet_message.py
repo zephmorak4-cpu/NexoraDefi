@@ -65,6 +65,8 @@ def build_wallet_report_completed_message(export: dict[str, object]) -> str:
             "Manual approval required: approve only wallets you trust using `/admin/approve-wallet`.",
             "Do not treat any candidate as an elite wallet until it is manually approved.",
             "",
+            "*Attached Review Document:* Word file with every discovered wallet profile.",
+            f"*Word Report:* `{export['docx_path']}`",
             f"*PDF Report:* `{export['pdf_path']}`",
         ]
     )

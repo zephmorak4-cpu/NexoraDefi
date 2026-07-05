@@ -51,13 +51,21 @@ class TelegramClient:
                     "caption": (caption or "")[:1024],
                     "parse_mode": parse_mode,
                 },
-                files={"document": (path.name, file_handle, "application/pdf")},
+                files={"document": (path.name, file_handle, self._content_type(path))},
             )
         response.raise_for_status()
         payload = response.json()
         if not payload.get("ok", False):
             logger.warning("telegram_document_send_failed", description=payload.get("description"))
         return payload
+
+    @staticmethod
+    def _content_type(path: Path) -> str:
+        if path.suffix.lower() == ".pdf":
+            return "application/pdf"
+        if path.suffix.lower() == ".docx":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return "application/octet-stream"
 
     async def close(self) -> None:
         await self.client.close()

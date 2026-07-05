@@ -34,8 +34,8 @@ async def _send_report_complete_message(export: dict[str, object]) -> None:
         await client.send_message(settings.telegram_chat_id, build_wallet_report_completed_message(export))
         await client.send_document(
             settings.telegram_chat_id,
-            str(export["pdf_path"]),
-            caption="Wallet Intelligence Report PDF. Candidate wallets only; manual approval is required before alerts.",
+            str(export["docx_path"]),
+            caption="Wallet Intelligence Report Word document. Full wallet-by-wallet profiles for manual review.",
         )
     finally:
         await client.close()
