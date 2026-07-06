@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     discovery_blacklisted_wallets: Annotated[list[str], NoDecode] = Field(default_factory=list)
     candidate_history_signature_limit: int = 1000
     candidate_live_ingestion_enabled: bool = True
+    candidate_pipeline_batch_size: int = 10
     candidate_transaction_size_weight: float = 0.25
     candidate_consistency_weight: float = 0.20
     candidate_early_entry_weight: float = 0.20

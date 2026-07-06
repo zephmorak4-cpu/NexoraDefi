@@ -26,7 +26,12 @@ class CandidateScoringEngine:
             else StoredWalletEvidenceProvider(self.session)
         )
         try:
-            return await WalletPipelineManager(self.session, self, evidence_provider=provider).run_all()
+            return await WalletPipelineManager(
+                self.session,
+                self,
+                evidence_provider=provider,
+                batch_size=self.settings.candidate_pipeline_batch_size,
+            ).run_all()
         finally:
             await provider.close()
 

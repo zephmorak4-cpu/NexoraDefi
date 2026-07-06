@@ -34,19 +34,22 @@ class WalletPipelineManager:
         validator: WalletPipelineValidator | None = None,
         classifier: WalletClassifier | None = None,
         evidence_provider: WalletEvidenceProvider | None = None,
+        batch_size: int | None = None,
     ) -> None:
         self.session = session
         self.scorer = scorer
         self.validator = validator or WalletPipelineValidator()
         self.classifier = classifier or WalletClassifier()
         self.evidence_provider = evidence_provider or StoredWalletEvidenceProvider(session)
+        self.batch_size = batch_size
 
     async def run_all(self) -> int:
+        query = select(CandidateWallet).where(CandidateWallet.status == "observing").order_by(CandidateWallet.updated_at, CandidateWallet.id)
+        if self.batch_size:
+            query = query.limit(self.batch_size)
         wallets = list(
             (
-                await self.session.scalars(
-                    select(CandidateWallet).where(CandidateWallet.status == "observing")
-                )
+                await self.session.scalars(query)
             ).all()
         )
         advanced = 0
