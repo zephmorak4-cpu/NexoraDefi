@@ -134,7 +134,11 @@ class WalletPipelineManager:
             await operation
             return True
         except Exception as exc:
-            self._stop(wallet, PipelineStatus.FAILED, f"{stage_name} failed: {type(exc).__name__}")
+            detail = type(exc).__name__
+            response = getattr(exc, "response", None)
+            if response is not None and getattr(response, "status_code", None):
+                detail = f"{detail} {response.status_code}"
+            self._stop(wallet, PipelineStatus.FAILED, f"{stage_name} failed: {detail}")
             logger.warning(
                 "wallet_pipeline_stage_failed",
                 wallet_id=wallet.id,

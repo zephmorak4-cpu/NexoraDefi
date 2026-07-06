@@ -198,7 +198,7 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
             )
         except Exception as exc:
             logger.info("moralis_wallet_history_unavailable", wallet=wallet.wallet_address, error=type(exc).__name__)
-            raise
+            return len(await self._history(wallet.id))
         raw_items = payload.get("result", payload) if isinstance(payload, dict) else payload
         items = raw_items if isinstance(raw_items, list) else []
         stored = 0
@@ -235,7 +235,7 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
             )
         except Exception as exc:
             logger.info("moralis_wallet_portfolio_unavailable", wallet=wallet_address, error=type(exc).__name__)
-            raise
+            return []
         raw_tokens = []
         if isinstance(payload, dict):
             raw_tokens = payload.get("tokens") or payload.get("result") or payload.get("items") or []
