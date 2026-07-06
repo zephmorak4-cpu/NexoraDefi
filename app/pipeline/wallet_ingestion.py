@@ -126,6 +126,8 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
         self._price_cache: dict[str, Decimal | None] = {}
 
     async def download_transactions(self, wallet: CandidateWallet) -> int:
+        if self.settings.moralis_api_key:
+            return await self._download_moralis_transactions(wallet)
         try:
             signatures = await self._signatures(wallet.wallet_address)
         except httpx.HTTPStatusError as exc:
@@ -144,15 +146,18 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
         return stored + len(await self._history(wallet.id))
 
     async def download_portfolio(self, wallet: CandidateWallet) -> bool:
-        try:
-            holdings = await self._token_accounts(wallet.wallet_address)
-        except httpx.HTTPStatusError as exc:
-            logger.info(
-                "solana_rpc_portfolio_unavailable_using_moralis",
-                wallet=wallet.wallet_address,
-                status_code=exc.response.status_code,
-            )
+        if self.settings.moralis_api_key:
             holdings = await self._moralis_portfolio(wallet.wallet_address)
+        else:
+            try:
+                holdings = await self._token_accounts(wallet.wallet_address)
+            except httpx.HTTPStatusError as exc:
+                logger.info(
+                    "solana_rpc_portfolio_unavailable",
+                    wallet=wallet.wallet_address,
+                    status_code=exc.response.status_code,
+                )
+                holdings = []
         priced_holdings = []
         for holding in holdings:
             price = await self._token_price(holding["token"])
