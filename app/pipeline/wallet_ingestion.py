@@ -117,10 +117,24 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
             timeout=settings.http_timeout_seconds,
             max_retries=settings.http_max_retries,
         )
+        self.moralis_client = AsyncAPIClient(
+            "https://solana-gateway.moralis.io",
+            timeout=settings.http_timeout_seconds,
+            max_retries=settings.http_max_retries,
+            headers={"accept": "application/json", "X-API-Key": settings.moralis_api_key or ""},
+        )
         self._price_cache: dict[str, Decimal | None] = {}
 
     async def download_transactions(self, wallet: CandidateWallet) -> int:
-        signatures = await self._signatures(wallet.wallet_address)
+        try:
+            signatures = await self._signatures(wallet.wallet_address)
+        except httpx.HTTPStatusError as exc:
+            logger.info(
+                "solana_rpc_history_unavailable_using_moralis",
+                wallet=wallet.wallet_address,
+                status_code=exc.response.status_code,
+            )
+            return await self._download_moralis_transactions(wallet)
         stored = 0
         for signature in signatures:
             if await self._signature_exists(wallet.id, signature):
@@ -130,7 +144,15 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
         return stored + len(await self._history(wallet.id))
 
     async def download_portfolio(self, wallet: CandidateWallet) -> bool:
-        holdings = await self._token_accounts(wallet.wallet_address)
+        try:
+            holdings = await self._token_accounts(wallet.wallet_address)
+        except httpx.HTTPStatusError as exc:
+            logger.info(
+                "solana_rpc_portfolio_unavailable_using_moralis",
+                wallet=wallet.wallet_address,
+                status_code=exc.response.status_code,
+            )
+            holdings = await self._moralis_portfolio(wallet.wallet_address)
         priced_holdings = []
         for holding in holdings:
             price = await self._token_price(holding["token"])
@@ -159,9 +181,75 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
         return total_value is not None
 
     async def close(self) -> None:
+        await self.moralis_client.close()
         await self.dexscreener_client.close()
         if self._owns_rpc_client:
             await self.rpc_client.aclose()
+
+    async def _download_moralis_transactions(self, wallet: CandidateWallet) -> int:
+        if not self.settings.moralis_api_key:
+            return len(await self._history(wallet.id))
+        try:
+            payload = await self.moralis_client.request_json(
+                "GET",
+                f"/account/mainnet/{wallet.wallet_address}/transfers",
+                params={"limit": self.settings.candidate_history_signature_limit},
+                headers={"X-API-Key": self.settings.moralis_api_key},
+            )
+        except Exception as exc:
+            logger.info("moralis_wallet_history_unavailable", wallet=wallet.wallet_address, error=type(exc).__name__)
+            raise
+        raw_items = payload.get("result", payload) if isinstance(payload, dict) else payload
+        items = raw_items if isinstance(raw_items, list) else []
+        stored = 0
+        for item in items:
+            normalized = self._normalize_moralis_transfer(item)
+            if normalized is None or await self._signature_exists(wallet.id, normalized["signature"]):
+                continue
+            self.session.add(
+                CandidateHistory(
+                    wallet_id=wallet.id,
+                    signature=normalized["signature"],
+                    token=normalized["token"],
+                    action=normalized["action"],
+                    direction=normalized["direction"],
+                    amount=normalized["amount"],
+                    usd_value=normalized["usd_value"],
+                    dex=normalized["dex"],
+                    fees=normalized["fees"],
+                    counterparty=normalized["counterparty"],
+                    timestamp=normalized["timestamp"],
+                )
+            )
+            stored += 1
+        return stored + len(await self._history(wallet.id))
+
+    async def _moralis_portfolio(self, wallet_address: str) -> list[dict[str, Any]]:
+        if not self.settings.moralis_api_key:
+            return []
+        try:
+            payload = await self.moralis_client.request_json(
+                "GET",
+                f"/account/mainnet/{wallet_address}/portfolio",
+                headers={"X-API-Key": self.settings.moralis_api_key},
+            )
+        except Exception as exc:
+            logger.info("moralis_wallet_portfolio_unavailable", wallet=wallet_address, error=type(exc).__name__)
+            raise
+        raw_tokens = []
+        if isinstance(payload, dict):
+            raw_tokens = payload.get("tokens") or payload.get("result") or payload.get("items") or []
+        elif isinstance(payload, list):
+            raw_tokens = payload
+        holdings = []
+        for item in raw_tokens if isinstance(raw_tokens, list) else []:
+            if not isinstance(item, dict):
+                continue
+            token = item.get("mint") or item.get("tokenAddress") or item.get("token_address") or item.get("address")
+            amount = decimal_or_zero(item.get("amount") or item.get("balance") or item.get("uiAmount"))
+            if token and amount > 0:
+                holdings.append({"token": str(token), "amount": amount})
+        return holdings
 
     async def _signatures(self, address: str) -> list[str]:
         signatures: list[str] = []
@@ -277,7 +365,36 @@ class SolanaWalletEvidenceProvider(StoredWalletEvidenceProvider):
     async def _rpc(self, method: str, params: list[Any]) -> dict[str, Any]:
         response = await self.rpc_client.post("/", json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(str(payload["error"]))
+        return payload
+
+    @staticmethod
+    def _normalize_moralis_transfer(item: dict[str, Any]) -> dict[str, Any] | None:
+        token = item.get("mint") or item.get("token_address") or item.get("tokenAddress") or item.get("tokenMint") or item.get("address")
+        signature = item.get("signature") or item.get("transactionHash") or item.get("transaction_hash")
+        if not token or not signature:
+            return None
+        action = str(item.get("type") or item.get("transactionType") or "transfer").lower()
+        direction = "sell" if action in {"sell", "out"} else "buy"
+        timestamp_raw = item.get("blockTimestamp") or item.get("block_timestamp") or item.get("timestamp")
+        if isinstance(timestamp_raw, str):
+            timestamp = datetime.fromisoformat(timestamp_raw.replace("Z", "+00:00"))
+        else:
+            timestamp = datetime.fromtimestamp(int(timestamp_raw or datetime.now(timezone.utc).timestamp()), tz=timezone.utc)
+        return {
+            "signature": str(signature),
+            "token": str(token),
+            "action": action,
+            "direction": direction,
+            "amount": decimal_or_zero(item.get("amount") or item.get("value") or item.get("tokenAmount")),
+            "usd_value": decimal_or_none(item.get("usdValue") or item.get("usd_value") or item.get("valueUsd")),
+            "dex": item.get("exchange") or item.get("dex"),
+            "fees": decimal_or_none(item.get("fee") or item.get("fees")),
+            "counterparty": item.get("from_address") or item.get("to_address") or item.get("counterparty"),
+            "timestamp": timestamp,
+        }
 
     @staticmethod
     def _detect_dex(transaction: dict[str, Any]) -> str | None:
