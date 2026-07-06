@@ -9,6 +9,7 @@ from sqlalchemy import desc, func, select
 
 from app.core.config import get_settings
 from app.database.session import SessionFactory
+from app.discovery.discovery_jobs import discover_candidate_wallets, update_candidate_scores
 from app.discovery.wallet_history import WalletHistoryService
 from app.discovery.wallet_promotion import WalletPromotionService
 from app.intelligence.wallet_review import WalletReviewService
@@ -22,10 +23,15 @@ class CandidateHistoryResponse(BaseModel):
 
     id: int
     wallet_id: int
+    signature: str | None = None
     token: str
     action: str
+    direction: str | None = None
     amount: Decimal
     usd_value: Decimal | None
+    dex: str | None = None
+    fees: Decimal | None = None
+    counterparty: str | None = None
     timestamp: datetime
 
 
@@ -44,6 +50,9 @@ class CandidateWalletResponse(BaseModel):
     historical_accuracy_score: Decimal
     suspicious_score: Decimal
     status: str
+    pipeline_stage: str
+    pipeline_status: str
+    pipeline_error: str | None
     notes: str | None
     created_at: datetime
     updated_at: datetime
@@ -65,6 +74,18 @@ async def candidates(status: str | None = None) -> list[CandidateWallet]:
         if status:
             query = query.where(CandidateWallet.status == status)
         return list((await session.scalars(query)).all())
+
+
+@router.post("/run-discovery")
+async def run_discovery() -> dict[str, int]:
+    discovered = await discover_candidate_wallets()
+    return {"discovered": discovered}
+
+
+@router.post("/run-wallet-pipeline")
+async def run_wallet_pipeline() -> dict[str, int]:
+    processed = await update_candidate_scores()
+    return {"processed": processed}
 
 
 @router.get("/candidate/{candidate_id}", response_model=CandidateDetailResponse)

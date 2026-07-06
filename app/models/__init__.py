@@ -9,7 +9,7 @@ from app.models.entities import (
     User,
     Wallet,
 )
-from app.models.discovery import CandidateHistory, CandidateWallet
+from app.models.discovery import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet
 from app.models.risk import RiskEvent, TokenRiskMetric
 from app.models.intelligence import WalletReview
 from app.models.smart_money import SmartMoneySignal, WalletMetric, WalletPosition, WalletScore
@@ -39,5 +39,7 @@ __all__ = [
     "TokenQuality",
     "CandidateWallet",
     "CandidateHistory",
+    "CandidatePortfolioSnapshot",
+    "CandidateTokenHistory",
     "WalletReview",
 ]

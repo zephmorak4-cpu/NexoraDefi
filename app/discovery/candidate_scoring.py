@@ -17,9 +17,18 @@ class CandidateScoringEngine:
         self.settings = settings
 
     async def score_all(self) -> int:
+        from app.pipeline.wallet_ingestion import SolanaWalletEvidenceProvider, StoredWalletEvidenceProvider
         from app.pipeline.wallet_pipeline import WalletPipelineManager
 
-        return await WalletPipelineManager(self.session, self).run_all()
+        provider = (
+            SolanaWalletEvidenceProvider(self.session, self.settings)
+            if self.settings.app_env == "production" and self.settings.candidate_live_ingestion_enabled
+            else StoredWalletEvidenceProvider(self.session)
+        )
+        try:
+            return await WalletPipelineManager(self.session, self, evidence_provider=provider).run_all()
+        finally:
+            await provider.close()
 
     async def score_wallet(self, wallet: CandidateWallet) -> Decimal:
         history = await self._history(wallet.id)

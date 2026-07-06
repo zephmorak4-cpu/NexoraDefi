@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.wallet_history import WalletHistoryService
-from app.models import CandidateHistory, CandidateWallet, WalletReview
+from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet, WalletReview
 from app.pipeline.pipeline_state import PipelineStage, stage_at_least
 from app.services.smart_money import aware, clamp
 
@@ -72,8 +72,10 @@ class WalletReportEngine:
         if not stage_at_least(wallet.pipeline_stage, PipelineStage.RANKED):
             raise ValueError("insufficient historical data: wallet has not completed the intelligence pipeline")
         history = await WalletHistoryService(self.session).for_candidate(wallet_id, limit=1000)
+        portfolio = await self._latest_portfolio(wallet_id)
+        token_history = await self._token_history(wallet_id)
         review = await self._review(wallet_id)
-        return self._build(wallet, history, review)
+        return self._build(wallet, history, review, portfolio, token_history)
 
     async def reports(self) -> list[WalletIntelligenceReport]:
         wallets = list(
@@ -90,11 +92,27 @@ class WalletReportEngine:
     async def _review(self, wallet_id: int) -> WalletReview | None:
         return await self.session.scalar(select(WalletReview).where(WalletReview.wallet_id == wallet_id))
 
+    async def _latest_portfolio(self, wallet_id: int) -> CandidatePortfolioSnapshot | None:
+        return await self.session.scalar(
+            select(CandidatePortfolioSnapshot)
+            .where(CandidatePortfolioSnapshot.wallet_id == wallet_id)
+            .order_by(CandidatePortfolioSnapshot.created_at.desc(), CandidatePortfolioSnapshot.id.desc())
+        )
+
+    async def _token_history(self, wallet_id: int) -> list[CandidateTokenHistory]:
+        return list(
+            (
+                await self.session.scalars(select(CandidateTokenHistory).where(CandidateTokenHistory.wallet_id == wallet_id))
+            ).all()
+        )
+
     def _build(
         self,
         wallet: CandidateWallet,
         history: list[CandidateHistory],
         review: WalletReview | None,
+        portfolio: CandidatePortfolioSnapshot | None,
+        token_history: list[CandidateTokenHistory],
     ) -> WalletIntelligenceReport:
         now = datetime.now(tz=aware(wallet.first_seen).tzinfo)
         first_seen = aware(wallet.first_seen)
@@ -122,7 +140,7 @@ class WalletReportEngine:
             current_status=wallet.status,
             wallet_type=wallet.wallet_type,
             wallet_age_days=wallet_age_days,
-            current_portfolio_value=sum(sizes, Decimal("0")),
+            current_portfolio_value=Decimal(portfolio.total_value_usd or 0) if portfolio else Decimal("0"),
             total_trades=total_trades,
             average_trades_per_day=Decimal(total_trades) / active_days,
             average_trades_per_week=Decimal(total_trades) / active_days * Decimal("7"),
@@ -152,7 +170,7 @@ class WalletReportEngine:
             conviction_score=conviction,
             risk_score=risk_score,
             risk_classification=self._risk_classification(risk_score),
-            token_preferences=self._token_preferences(history),
+            token_preferences=self._token_preferences(history, token_history),
             executive_summary=self._executive_summary(wallet, copy_score, risk_score, total_trades),
             administrator_recommendation=recommendation,
             recommendation_reasoning=reasoning,
@@ -261,14 +279,17 @@ class WalletReportEngine:
         return "Very High Risk"
 
     @staticmethod
-    def _token_preferences(history: list[CandidateHistory]) -> dict[str, object]:
+    def _token_preferences(history: list[CandidateHistory], token_history: list[CandidateTokenHistory] | None = None) -> dict[str, object]:
         token_counts = Counter(item.token for item in history)
         action_counts = Counter(item.action for item in history)
+        closed = [item for item in token_history or [] if item.roi is not None]
+        winners = sorted((item for item in closed if Decimal(item.roi or 0) > 0), key=lambda item: Decimal(item.roi or 0), reverse=True)
+        losers = sorted((item for item in closed if Decimal(item.roi or 0) < 0), key=lambda item: Decimal(item.roi or 0))
         return {
             "most_traded_tokens": token_counts.most_common(10),
             "most_traded_sectors": ["Solana trending tokens"] if history else [],
-            "winning_projects": [],
-            "losing_projects": [],
+            "winning_projects": [(item.token, item.roi) for item in winners[:10]],
+            "losing_projects": [(item.token, item.roi) for item in losers[:10]],
             "preferred_holding_duration": "unknown",
             "actions": action_counts.most_common(),
         }
