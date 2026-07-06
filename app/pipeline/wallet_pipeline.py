@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Awaitable, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.wallet_classifier import WalletClassifier
+from app.core.logging import get_logger
 from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet
 from app.pipeline.wallet_ingestion import StoredWalletEvidenceProvider, WalletEvidenceProvider
 from app.pipeline.pipeline_state import PipelineStage, PipelineStatus, normalize_stage
 from app.pipeline.pipeline_validator import WalletPipelineValidator
+
+logger = get_logger(__name__)
 
 
 class WalletScorer(Protocol):
@@ -58,21 +61,24 @@ class WalletPipelineManager:
         wallet.pipeline_status = PipelineStatus.IN_PROGRESS.value
         wallet.pipeline_error = None
 
-        await self.evidence_provider.download_transactions(wallet)
+        if not await self._run_stage(wallet, "download_transactions", self.evidence_provider.download_transactions(wallet)):
+            return False
         history = await self._history(wallet.id)
         if not self.validator.has_complete_transactions(history):
             self._stop(wallet, PipelineStatus.INSUFFICIENT_HISTORY, "Insufficient historical data")
             return False
         self._advance(wallet, PipelineStage.TRANSACTIONS_DOWNLOADED)
 
-        await self.evidence_provider.download_portfolio(wallet)
+        if not await self._run_stage(wallet, "download_portfolio", self.evidence_provider.download_portfolio(wallet)):
+            return False
         snapshot = await self._latest_portfolio(wallet.id)
         if not self.validator.has_portfolio_evidence(snapshot):
             self._stop(wallet, PipelineStatus.INSUFFICIENT_PORTFOLIO_DATA, "Insufficient portfolio data")
             return False
         self._advance(wallet, PipelineStage.PORTFOLIO_DOWNLOADED)
 
-        await self.evidence_provider.download_token_history(wallet)
+        if not await self._run_stage(wallet, "download_token_history", self.evidence_provider.download_token_history(wallet)):
+            return False
         token_history = await self._token_history(wallet.id)
         if not self.validator.has_token_history(history, token_history):
             self._stop(wallet, PipelineStatus.INSUFFICIENT_TOKEN_HISTORY, "Insufficient token history")
@@ -122,6 +128,21 @@ class WalletPipelineManager:
                 )
             ).all()
         )
+
+    async def _run_stage(self, wallet: CandidateWallet, stage_name: str, operation: Awaitable[object]) -> bool:
+        try:
+            await operation
+            return True
+        except Exception as exc:
+            self._stop(wallet, PipelineStatus.FAILED, f"{stage_name} failed: {type(exc).__name__}")
+            logger.warning(
+                "wallet_pipeline_stage_failed",
+                wallet_id=wallet.id,
+                wallet_address=wallet.wallet_address,
+                stage=stage_name,
+                error=type(exc).__name__,
+            )
+            return False
 
     async def _latest_portfolio(self, wallet_id: int) -> CandidatePortfolioSnapshot | None:
         return await self.session.scalar(
