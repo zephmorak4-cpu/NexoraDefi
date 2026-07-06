@@ -15,6 +15,8 @@ from app.intelligence.wallet_ranking import WalletRankingEngine
 from app.intelligence.wallet_report import WalletReportEngine
 from app.intelligence.wallet_review import WalletReviewService
 from app.telegram.client import TelegramClient
+from app.models import CandidateWallet
+from app.pipeline.pipeline_state import PipelineStage, PipelineStatus
 
 router = APIRouter(prefix="/admin", tags=["wallet-intelligence"])
 
@@ -45,6 +47,12 @@ async def _send_report_complete_message(export: dict[str, object]) -> None:
 async def reports(send_telegram: bool = True) -> dict[str, object]:
     async with SessionFactory() as session:
         generated = await WalletReportEngine(session).reports()
+        for report in generated:
+            wallet = await session.get(CandidateWallet, report.wallet_id)
+            if wallet is not None:
+                wallet.pipeline_stage = PipelineStage.REPORT_GENERATED.value
+                wallet.pipeline_status = PipelineStatus.READY.value
+        await session.commit()
         export = WalletReportExporter().export(generated, Path(gettempdir()) / "nexora-reports")
     if send_telegram:
         await _send_report_complete_message(export)

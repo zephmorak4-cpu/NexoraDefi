@@ -27,6 +27,9 @@ class CandidateWallet(Base):
     historical_accuracy_score: Mapped[Decimal] = mapped_column(Numeric(7, 4), default=0)
     suspicious_score: Mapped[Decimal] = mapped_column(Numeric(7, 4), default=0)
     status: Mapped[str] = mapped_column(String(32), default="observing")
+    pipeline_stage: Mapped[str] = mapped_column(String(48), default="DISCOVERED")
+    pipeline_status: Mapped[str] = mapped_column(String(64), default="PENDING")
+    pipeline_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

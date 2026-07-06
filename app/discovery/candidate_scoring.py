@@ -17,19 +17,9 @@ class CandidateScoringEngine:
         self.settings = settings
 
     async def score_all(self) -> int:
-        wallets = list(
-            (
-                await self.session.scalars(
-                    select(CandidateWallet).where(CandidateWallet.status == "observing")
-                )
-            ).all()
-        )
-        for wallet in wallets:
-            wallet.candidate_score = await self.score_wallet(wallet)
-            wallet.reputation_score = await self.reputation_score(wallet)
-            wallet.historical_accuracy_score = await self.historical_accuracy(wallet)
-        await self.session.commit()
-        return len(wallets)
+        from app.pipeline.wallet_pipeline import WalletPipelineManager
+
+        return await WalletPipelineManager(self.session, self).run_all()
 
     async def score_wallet(self, wallet: CandidateWallet) -> Decimal:
         history = await self._history(wallet.id)

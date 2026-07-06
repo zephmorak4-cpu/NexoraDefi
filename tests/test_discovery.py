@@ -115,10 +115,10 @@ async def test_candidate_scoring_and_classification(db_session):
             CandidateHistory(
                 wallet_id=candidate.id,
                 token="TokenMint",
-                action="liquidity_add",
+                action="buy",
                 amount=Decimal("10"),
                 usd_value=Decimal("50000"),
-                timestamp=datetime.now(timezone.utc) - timedelta(days=1),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=5),
             ),
             CandidateHistory(
                 wallet_id=candidate.id,
@@ -126,6 +126,30 @@ async def test_candidate_scoring_and_classification(db_session):
                 action="liquidity_add",
                 amount=Decimal("12"),
                 usd_value=Decimal("60000"),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=4),
+            ),
+            CandidateHistory(
+                wallet_id=candidate.id,
+                token="TokenMint",
+                action="sell",
+                amount=Decimal("6"),
+                usd_value=Decimal("70000"),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=3),
+            ),
+            CandidateHistory(
+                wallet_id=candidate.id,
+                token="TokenMint2",
+                action="liquidity_add",
+                amount=Decimal("5"),
+                usd_value=Decimal("15000"),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=2),
+            ),
+            CandidateHistory(
+                wallet_id=candidate.id,
+                token="TokenMint2",
+                action="sell",
+                amount=Decimal("5"),
+                usd_value=Decimal("18000"),
                 timestamp=datetime.now(timezone.utc),
             ),
         ]

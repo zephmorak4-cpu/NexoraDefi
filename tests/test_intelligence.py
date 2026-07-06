@@ -32,6 +32,8 @@ async def seed_candidate(db_session, score: Decimal = Decimal("90")) -> Candidat
         historical_accuracy_score=Decimal("82"),
         suspicious_score=Decimal("0"),
         status="observing",
+        pipeline_stage="RANKED",
+        pipeline_status="READY",
     )
     db_session.add(candidate)
     await db_session.flush()

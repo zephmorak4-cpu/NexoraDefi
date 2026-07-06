@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.wallet_history import WalletHistoryService
 from app.models import CandidateHistory, CandidateWallet, WalletReview
+from app.pipeline.pipeline_state import PipelineStage, stage_at_least
 from app.services.smart_money import aware, clamp
 
 
@@ -68,6 +69,8 @@ class WalletReportEngine:
         wallet = await self.session.get(CandidateWallet, wallet_id)
         if wallet is None:
             raise ValueError("candidate wallet not found")
+        if not stage_at_least(wallet.pipeline_stage, PipelineStage.RANKED):
+            raise ValueError("insufficient historical data: wallet has not completed the intelligence pipeline")
         history = await WalletHistoryService(self.session).for_candidate(wallet_id, limit=1000)
         review = await self._review(wallet_id)
         return self._build(wallet, history, review)
@@ -76,7 +79,9 @@ class WalletReportEngine:
         wallets = list(
             (
                 await self.session.scalars(
-                    select(CandidateWallet).order_by(CandidateWallet.candidate_score.desc(), CandidateWallet.id)
+                    select(CandidateWallet)
+                    .where(CandidateWallet.pipeline_stage.in_((PipelineStage.RANKED.value, PipelineStage.REPORT_GENERATED.value)))
+                    .order_by(CandidateWallet.candidate_score.desc(), CandidateWallet.id)
                 )
             ).all()
         )
@@ -287,4 +292,3 @@ class WalletReportEngine:
         if risk_score < 40:
             return "Reject", "The wallet has a high-risk profile relative to the current observation data."
         return "Needs More Observation", "The wallet has not yet shown enough quality or consistency for elite status."
-

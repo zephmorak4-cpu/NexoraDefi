@@ -42,6 +42,8 @@ class CandidateWalletRepository:
                 first_seen=event.timestamp,
                 discovery_reason=event.reason,
                 status="observing",
+                pipeline_stage="DISCOVERED",
+                pipeline_status="PENDING",
             )
             self.session.add(wallet)
             await self.session.flush()
@@ -73,4 +75,3 @@ class CandidateWalletRepository:
     @staticmethod
     def now() -> datetime:
         return datetime.now(timezone.utc)
-
