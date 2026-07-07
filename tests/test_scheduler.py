@@ -29,7 +29,8 @@ def test_scheduler_jobs_use_configured_intervals():
     assert jobs == {
         "blockchain": 11, "market": 22, "social": 33, "news": 44,
         "wallet_analysis": 55, "wallet_scoring": 66,
-        "candidate_wallet_discovery": 70, "wallet_position_reconstruction": 74, "candidate_wallet_scoring": 71,
+        "candidate_wallet_discovery": 70, "candidate_cost_basis_enrichment": 74,
+        "wallet_position_reconstruction": 74, "candidate_wallet_scoring": 71,
         "elite_wallet_demotions": 73,
         "solana_wallet_monitor": 67, "solana_wallet_reputation": 68, "solana_token_quality": 69,
         "solana_smart_money_signals": 77, "legacy_smart_money_signals": 77,

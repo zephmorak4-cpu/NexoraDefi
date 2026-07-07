@@ -7,7 +7,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.database.session import SessionFactory
+from app.core.config import get_settings
 from app.models import WalletPosition
+from app.trade_reconstruction.cost_basis import CostBasisEnrichmentEngine
 from app.trade_reconstruction.position_summary import PositionSummary
 from app.trade_reconstruction.trade_reconstruction import TradeReconstructionEngine
 
@@ -77,5 +79,19 @@ async def position_summary() -> dict[str, object]:
 @router.post("/rebuild-positions")
 async def rebuild_positions() -> dict[str, int]:
     async with SessionFactory() as session:
+        enrichment = CostBasisEnrichmentEngine(session, get_settings())
+        enriched = await enrichment.enrich_missing_history()
+        await enrichment.close()
         rebuilt = await TradeReconstructionEngine(session).rebuild_all()
-        return {"positions": rebuilt}
+        return {"enriched_history": enriched, "positions": rebuilt}
+
+
+@router.post("/enrich-cost-basis")
+async def enrich_cost_basis() -> dict[str, int]:
+    async with SessionFactory() as session:
+        enrichment = CostBasisEnrichmentEngine(session, get_settings())
+        try:
+            enriched = await enrichment.enrich_missing_history()
+        finally:
+            await enrichment.close()
+        return {"enriched_history": enriched}
