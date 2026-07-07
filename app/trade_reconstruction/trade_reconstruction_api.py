@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.database.session import SessionFactory
 from app.core.config import get_settings
+from app.market_context.market_context import MarketContextEngine
 from app.models import WalletPosition
 from app.trade_reconstruction.cost_basis import CostBasisEnrichmentEngine
 from app.trade_reconstruction.position_summary import PositionSummary
@@ -84,6 +85,13 @@ async def rebuild_positions() -> dict[str, int]:
         await enrichment.close()
         rebuilt = await TradeReconstructionEngine(session).rebuild_all()
         return {"enriched_history": enriched, "positions": rebuilt}
+
+
+@router.post("/enrich-market-context")
+async def enrich_position_market_context() -> dict[str, int]:
+    async with SessionFactory() as session:
+        enriched = await MarketContextEngine(session, get_settings()).enrich_all_positions()
+        return {"positions": enriched}
 
 
 @router.post("/enrich-cost-basis")

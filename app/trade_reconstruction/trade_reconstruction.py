@@ -4,6 +4,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CandidateHistory, CandidateWallet, WalletPosition
+from app.core.config import get_settings
+from app.market_context.market_context import MarketContextEngine
 from app.trade_reconstruction.position_builder import PositionBuilder
 from app.trade_reconstruction.position_matcher import PositionMatcher
 from app.trade_reconstruction.position_summary import PositionSummary
@@ -40,6 +42,7 @@ class TradeReconstructionEngine:
                 self.session.add(position)
                 built += 1
         await self.session.flush()
+        await MarketContextEngine(self.session, get_settings()).enrich_wallet_positions(wallet_id)
         return built
 
     async def positions(self, wallet_address: str | None = None) -> list[WalletPosition]:

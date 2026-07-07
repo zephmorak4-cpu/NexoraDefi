@@ -116,6 +116,19 @@ def test_market_context_weights_are_configurable():
     assert settings.market_context_weights["btc"] == 1
 
 
+def test_position_market_context_weights_are_configurable():
+    settings = Settings(
+        market_context_liquidity_weight=1,
+        market_context_market_cap_weight=0,
+        market_context_volume_trend_weight=0,
+        market_context_holder_growth_weight=0,
+        market_context_consensus_weight=0,
+        market_context_token_age_weight=0,
+        market_context_market_structure_weight=0,
+    )
+    assert settings.position_market_context_weights["liquidity"] == 1
+
+
 def test_market_context_thresholds_must_be_ordered():
     with pytest.raises(ValidationError, match="Market sentiment thresholds"):
         Settings(market_fear_threshold=70, market_greed_threshold=60)

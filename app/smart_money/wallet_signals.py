@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.models import Alert, TokenQuality, TrackedWallet, WalletActivity
+from app.models import Alert, MarketContext, TokenQuality, TrackedWallet, WalletActivity
 from app.smart_money.provider import BlockchainProvider, SolanaProvider
 from app.smart_money.token_quality import TokenQualityEngine
 from app.smart_money.wallet_reputation import clamp
@@ -90,6 +90,20 @@ class SmartMoneySignalEngine:
         exists = await self.session.scalar(select(Alert.id).where(Alert.alert_type == fingerprint))
         if exists:
             return False
+        context = await self.session.scalar(
+            select(MarketContext)
+            .where(MarketContext.token_address == activity.token_address)
+            .order_by(desc(MarketContext.updated_at), desc(MarketContext.id))
+        )
+        context_score = context.context_score if context and context.context_score is not None else "Insufficient Market Data"
+        context_liquidity = context.liquidity_entry if context and context.liquidity_entry is not None else "Insufficient Market Data"
+        context_market_cap = context.market_cap_entry if context and context.market_cap_entry is not None else "Insufficient Market Data"
+        context_holders = (
+            f"{context.holder_count_entry} -> {context.holder_count_exit}"
+            if context and context.holder_count_entry is not None and context.holder_count_exit is not None
+            else "Insufficient Market Data"
+        )
+        consensus = context.wallet_consensus if context else "Insufficient Market Data"
         confidence = clamp((Decimal(wallet.reputation_score) + Decimal(quality.quality_score) + conviction) / Decimal("3"))
         self.session.add(
             Alert(
@@ -103,7 +117,13 @@ class SmartMoneySignalEngine:
                     f"Wallet Reputation: {wallet.reputation_score}\n"
                     f"Token Quality: {quality.quality_score}\n"
                     f"Conviction: {conviction}\n"
+                    f"Market Context Score: {context_score}\n"
+                    f"Liquidity: {context_liquidity}\n"
+                    f"Market Cap: {context_market_cap}\n"
+                    f"Holder Growth: {context_holders}\n"
+                    f"Elite Wallet Consensus: {consensus}\n"
                     f"Confidence: {confidence}\n"
+                    "AI Explanation: market context is included only when stored evidence exists; otherwise it is marked insufficient.\n"
                     "Why It Matters: an elite tracked Solana wallet showed fresh activity before broad confirmation.\n"
                     "Risk Summary: this is an early signal, not a profit guarantee; verify liquidity and contract risk.\n"
                     "Suggested Action: add to watchlist and wait for confirmation before sizing any position."

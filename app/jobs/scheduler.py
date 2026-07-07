@@ -25,6 +25,7 @@ from app.jobs.tasks import (
     send_smart_money_alerts,
     update_risk_volatility,
 )
+from app.market_context.market_context_jobs import enrich_market_context
 from app.smart_money.wallet_jobs import (
     generate_solana_smart_money_signals,
     monitor_solana_wallets,
@@ -50,6 +51,7 @@ def build_scheduler(settings: Settings) -> AsyncIOScheduler:
         (discover_candidate_wallets, "candidate_wallet_discovery", settings.candidate_discovery_interval_seconds),
         (enrich_candidate_cost_basis, "candidate_cost_basis_enrichment", settings.position_reconstruction_interval_seconds),
         (rebuild_wallet_positions, "wallet_position_reconstruction", settings.position_reconstruction_interval_seconds),
+        (enrich_market_context, "market_context_enrichment", settings.market_context_interval_seconds),
         (update_candidate_scores, "candidate_wallet_scoring", settings.candidate_scoring_interval_seconds),
         (evaluate_elite_demotions, "elite_wallet_demotions", settings.elite_demotion_interval_seconds),
         (monitor_solana_wallets, "solana_wallet_monitor", settings.wallet_monitor_interval_seconds),

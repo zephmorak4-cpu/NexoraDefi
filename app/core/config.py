@@ -179,6 +179,14 @@ class Settings(BaseSettings):
     sector_rotation_interval_seconds: int = 3600
     market_sentiment_interval_seconds: int = 3600
     market_context_batch_size: int = 500
+    market_context_interval_seconds: int = 3600
+    market_context_liquidity_weight: float = 0.20
+    market_context_market_cap_weight: float = 0.15
+    market_context_volume_trend_weight: float = 0.15
+    market_context_holder_growth_weight: float = 0.15
+    market_context_consensus_weight: float = 0.20
+    market_context_token_age_weight: float = 0.10
+    market_context_market_structure_weight: float = 0.05
     market_btc_weight: float = 0.20
     market_eth_weight: float = 0.15
     market_strength_weight: float = 0.20
@@ -310,6 +318,7 @@ class Settings(BaseSettings):
         "sector_rotation_interval_seconds",
         "market_sentiment_interval_seconds",
         "market_context_batch_size",
+        "market_context_interval_seconds",
         "decision_generation_interval_seconds",
         "confidence_calibration_interval_seconds",
         "portfolio_statistics_interval_seconds",
@@ -428,6 +437,9 @@ class Settings(BaseSettings):
         weights = self.market_context_weights
         if any(weight < 0 for weight in weights.values()) or sum(weights.values()) <= 0:
             raise ValueError("Market context weights must be non-negative with a positive total")
+        position_weights = self.position_market_context_weights
+        if any(weight < 0 for weight in position_weights.values()) or sum(position_weights.values()) <= 0:
+            raise ValueError("Position market context weights must be non-negative with a positive total")
         sentiment = (
             self.market_fear_threshold,
             self.market_greed_threshold,
@@ -568,6 +580,18 @@ class Settings(BaseSettings):
             "market_volatility": self.market_volatility_weight,
             "capital_flow": self.market_capital_flow_weight,
             "risk_appetite": self.market_risk_appetite_weight,
+        }
+
+    @property
+    def position_market_context_weights(self) -> dict[str, float]:
+        return {
+            "liquidity": self.market_context_liquidity_weight,
+            "market_cap": self.market_context_market_cap_weight,
+            "volume_trend": self.market_context_volume_trend_weight,
+            "holder_growth": self.market_context_holder_growth_weight,
+            "consensus": self.market_context_consensus_weight,
+            "token_age": self.market_context_token_age_weight,
+            "market_structure": self.market_context_market_structure_weight,
         }
 
     @property

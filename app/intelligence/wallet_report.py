@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from statistics import median
@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.wallet_history import WalletHistoryService
-from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet, WalletPosition, WalletReview
+from app.market_context.market_context import explain_market_context
+from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet, MarketContext, WalletPosition, WalletReview
 from app.pipeline.pipeline_state import PipelineStage, stage_at_least
 from app.services.smart_money import aware, clamp
 from app.trade_reconstruction.position_metrics import PositionMetrics
@@ -63,6 +64,8 @@ class WalletIntelligenceReport:
     approved_for_signals: bool
     position_summary: dict[str, object]
     investment_timeline: list[str]
+    market_context_summary: dict[str, object] = field(default_factory=dict)
+    market_context_explanations: list[str] = field(default_factory=list)
 
 
 class WalletReportEngine:
@@ -79,8 +82,9 @@ class WalletReportEngine:
         portfolio = await self._latest_portfolio(wallet_id)
         token_history = await self._token_history(wallet_id)
         positions = await self._positions(wallet_id)
+        contexts = await self._contexts(positions)
         review = await self._review(wallet_id)
-        return self._build(wallet, history, review, portfolio, token_history, positions)
+        return self._build(wallet, history, review, portfolio, token_history, positions, contexts)
 
     async def reports(self) -> list[WalletIntelligenceReport]:
         wallets = list(
@@ -118,6 +122,18 @@ class WalletReportEngine:
             ).all()
         )
 
+    async def _contexts(self, positions: list[WalletPosition]) -> list[MarketContext]:
+        position_ids = [position.id for position in positions if position.id is not None]
+        if not position_ids:
+            return []
+        return list(
+            (
+                await self.session.scalars(
+                    select(MarketContext).where(MarketContext.wallet_position_id.in_(position_ids))
+                )
+            ).all()
+        )
+
     def _build(
         self,
         wallet: CandidateWallet,
@@ -126,6 +142,7 @@ class WalletReportEngine:
         portfolio: CandidatePortfolioSnapshot | None,
         token_history: list[CandidateTokenHistory],
         positions: list[WalletPosition],
+        contexts: list[MarketContext],
     ) -> WalletIntelligenceReport:
         now = datetime.now(tz=aware(wallet.first_seen).tzinfo)
         first_seen = aware(wallet.first_seen)
@@ -146,7 +163,16 @@ class WalletReportEngine:
         copy_score = self._copy_performance_score_from_positions(wallet, positions, risk_score)
         conviction = self._conviction_score_from_positions(positions)
         trading_style, style_reason = self._trading_style(wallet, history)
-        recommendation, reasoning = self._recommendation(copy_score, Decimal(wallet.reputation_score), Decimal(wallet.historical_accuracy_score), risk_score, len(closed_positions))
+        context_summary = self._market_context_summary(contexts, positions)
+        market_context_score = Decimal(str(context_summary["average_context_score"])) if context_summary["average_context_score"] != "Insufficient Market Data" else None
+        recommendation, reasoning = self._recommendation(
+            copy_score,
+            Decimal(wallet.reputation_score),
+            Decimal(wallet.historical_accuracy_score),
+            risk_score,
+            len(closed_positions),
+            market_context_score,
+        )
         position_summary = PositionSummary().build(positions)
         return WalletIntelligenceReport(
             wallet_id=wallet.id,
@@ -193,6 +219,8 @@ class WalletReportEngine:
             approved_for_signals=bool(review.approved_for_signals) if review else False,
             position_summary=position_summary,
             investment_timeline=self._investment_timeline(positions),
+            market_context_summary=context_summary,
+            market_context_explanations=[explain_market_context(context) for context in contexts],
         )
 
     @staticmethod
@@ -357,16 +385,38 @@ class WalletReportEngine:
         )
 
     @staticmethod
-    def _recommendation(copy_score: Decimal, reputation: Decimal, accuracy: Decimal, risk_score: Decimal, total_trades: int) -> tuple[str, str]:
+    def _recommendation(
+        copy_score: Decimal,
+        reputation: Decimal,
+        accuracy: Decimal,
+        risk_score: Decimal,
+        total_trades: int,
+        market_context_score: Decimal | None = None,
+    ) -> tuple[str, str]:
         if total_trades < 5:
             return "Needs More Observation", "The wallet has too little observed history for a confident elite decision."
-        if copy_score >= 85 and reputation >= 85 and accuracy >= 75 and risk_score >= 70:
-            return "Strong Elite Candidate", "Performance, reputation, accuracy, and risk profile all meet strong review standards."
-        if copy_score >= 65 and reputation >= 60:
-            return "Promising Candidate", "The wallet has useful signals but needs administrator review before approval."
+        if market_context_score is None:
+            return "Needs More Observation", "Insufficient market context data: reconstructed positions need context snapshots before intelligence approval."
+        if copy_score >= 85 and reputation >= 85 and accuracy >= 75 and risk_score >= 70 and market_context_score >= 70:
+            return "Strong Elite Candidate", "Performance, reputation, accuracy, risk, and market context all meet strong review standards."
+        if copy_score >= 65 and reputation >= 60 and market_context_score >= 50:
+            return "Promising Candidate", "The wallet has useful signals and acceptable market context, but still needs administrator review before approval."
         if risk_score < 40:
             return "Reject", "The wallet has a high-risk profile relative to the current observation data."
         return "Needs More Observation", "The wallet has not yet shown enough quality or consistency for elite status."
+
+    @staticmethod
+    def _market_context_summary(contexts: list[MarketContext], positions: list[WalletPosition]) -> dict[str, object]:
+        scored = [Decimal(context.context_score) for context in contexts if context.context_score is not None]
+        average = sum(scored, Decimal("0")) / Decimal(len(scored)) if scored else None
+        missing = max(len(positions) - len(contexts), 0) + sum(1 for context in contexts if context.context_score is None)
+        return {
+            "positions_with_context": len(contexts),
+            "positions_missing_context": missing,
+            "average_context_score": f"{average:.2f}" if average is not None else "Insufficient Market Data",
+            "strong_context_positions": sum(1 for value in scored if value >= Decimal("70")),
+            "insufficient_market_data": missing > 0 or average is None,
+        }
 
     @staticmethod
     def _position_drawdown(positions: list[WalletPosition]) -> Decimal:

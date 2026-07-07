@@ -44,6 +44,8 @@ class WalletPDFRenderer:
                     f"Wallet Reputation Score: {report.wallet_reputation_score:.2f}",
                     f"Historical Accuracy: {report.historical_accuracy:.2f}",
                     f"Risk: {report.risk_classification} ({report.risk_score:.2f})",
+                    f"Market Context Score: {report.market_context_summary.get('average_context_score', 'Insufficient Market Data')}",
+                    f"Market Context: {'; '.join(report.market_context_explanations[:2]) or 'Insufficient Market Data'}",
                     f"Recommendation: {report.administrator_recommendation}",
                     f"Reasoning: {report.recommendation_reasoning}",
                     f"Summary: {report.executive_summary}",
@@ -65,4 +67,3 @@ class WalletPDFRenderer:
         )
         output_path.write_text(content, encoding="latin-1")
         return output_path
-
