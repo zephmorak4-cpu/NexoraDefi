@@ -91,3 +91,21 @@ async def test_wallet_positions_table_accepts_reconstructed_candidate_positions(
         )
     )
     await db_session.commit()
+
+
+async def test_reconstruction_rejects_closed_position_without_cost_basis(db_session):
+    wallet = CandidateWallet(wallet_address="no-cost-wallet", chain="solana", discovery_reason="test", status="observing")
+    db_session.add(wallet)
+    await db_session.flush()
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            CandidateHistory(wallet_id=wallet.id, signature="buy", token="TokenX", action="buy", amount=Decimal("1"), usd_value=None, timestamp=now - timedelta(days=1)),
+            CandidateHistory(wallet_id=wallet.id, signature="sell", token="TokenX", action="sell", amount=Decimal("1"), usd_value=None, timestamp=now),
+        ]
+    )
+    await db_session.commit()
+
+    rebuilt = await TradeReconstructionEngine(db_session).rebuild_wallet(wallet.id)
+
+    assert rebuilt == 0

@@ -27,8 +27,8 @@ class PositionSummary:
             "average_holding_time": self._avg([Decimal(item.holding_period or 0) for item in positions]),
             "average_position_size": self._avg([Decimal(item.maximum_position_size or 0) for item in positions]),
             "portfolio_diversification": len({item.token_address for item in positions if item.token_address}),
-            "best_performing_token": self._token(max(closed, key=lambda item: Decimal(item.realized_roi or 0), default=None)),
-            "worst_performing_token": self._token(min(closed, key=lambda item: Decimal(item.realized_roi or 0), default=None)),
+            "best_performing_token": self._token(max(winners, key=lambda item: Decimal(item.realized_roi or 0), default=None)),
+            "worst_performing_token": self._token(min(losers, key=lambda item: Decimal(item.realized_roi or 0), default=None)),
             "position_quality_distribution": dict(Counter(item.position_classification for item in positions)),
         }
 

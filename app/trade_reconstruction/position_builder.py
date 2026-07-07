@@ -27,6 +27,10 @@ class PositionBuilder:
         quantity_sold = sum((Decimal(row.amount or 0) for row in sells), ZERO)
         buy_value = sum((Decimal(row.usd_value or 0) for row in buys), ZERO)
         sell_value = sum((Decimal(row.usd_value or 0) for row in sells), ZERO)
+        if buy_value <= 0:
+            return None
+        if sells and sell_value <= 0:
+            return None
         average_entry = buy_value / quantity_bought if quantity_bought > 0 and buy_value > 0 else ZERO
         average_exit = sell_value / quantity_sold if quantity_sold > 0 and sell_value > 0 else ZERO
         remaining = max(ZERO, quantity_bought - quantity_sold)
