@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     cryptopanic_api_key: str | None = None
     telegram_bot_token: str | None = None
     telegram_chat_id: int | None = None
+    discord_webhook_url: str | None = None
 
     etherscan_chain_id: int = 1
     moralis_chain: str = "solana"
@@ -39,6 +40,19 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 15.0
     http_max_retries: int = 3
     scheduler_enabled: bool = True
+    alpha_scan_interval_seconds: int = 300
+    alpha_min_liquidity_usd: float = 5000
+    alpha_max_initial_market_cap_usd: float = 500000
+    alpha_min_tx_count: int = 20
+    alpha_min_final_alert_score: float = 90
+    alpha_max_creator_hold_percent: float = 10
+    alpha_max_top10_holder_percent: float = 45
+    alpha_smart_wallet_min_count: int = 3
+    debug_alpha_engine: bool = False
+    telegram_alerts_enabled: bool = True
+    discord_alerts_enabled: bool = False
+    alpha_launch_scan_limit: int = 50
+    alpha_smart_wallets: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     smart_money_profitability_weight: float = 0.40
     smart_money_consistency_weight: float = 0.25
@@ -211,7 +225,14 @@ class Settings(BaseSettings):
     drift_alert_threshold: float = 30
     calibration_error_alert_threshold: float = 20
 
-    @field_validator("tracked_wallets", "tracked_coins", "reddit_subreddits", "discovery_blacklisted_wallets", mode="before")
+    @field_validator(
+        "tracked_wallets",
+        "tracked_coins",
+        "reddit_subreddits",
+        "discovery_blacklisted_wallets",
+        "alpha_smart_wallets",
+        mode="before",
+    )
     @classmethod
     def parse_csv(cls, value: object) -> object:
         if isinstance(value, str):
@@ -223,6 +244,10 @@ class Settings(BaseSettings):
         "market_refresh_seconds",
         "social_refresh_seconds",
         "news_refresh_seconds",
+        "alpha_scan_interval_seconds",
+        "alpha_min_tx_count",
+        "alpha_smart_wallet_min_count",
+        "alpha_launch_scan_limit",
         "wallet_analysis_interval_seconds",
         "wallet_scoring_interval_seconds",
         "wallet_monitor_interval_seconds",
@@ -287,6 +312,19 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError("scheduler intervals must be positive")
         return value
+
+    @model_validator(mode="after")
+    def validate_alpha_discovery_configuration(self) -> "Settings":
+        bounded = (
+            self.alpha_min_final_alert_score,
+            self.alpha_max_creator_hold_percent,
+            self.alpha_max_top10_holder_percent,
+        )
+        if not all(0 <= value <= 100 for value in bounded):
+            raise ValueError("Alpha discovery percentage thresholds must be within 0-100")
+        if self.alpha_min_liquidity_usd < 0 or self.alpha_max_initial_market_cap_usd < 0:
+            raise ValueError("Alpha discovery market thresholds must be non-negative")
+        return self
 
     @model_validator(mode="after")
     def validate_smart_money_configuration(self) -> "Settings":

@@ -6,6 +6,7 @@ def test_scheduler_jobs_use_configured_intervals():
     settings = Settings(
         blockchain_refresh_seconds=11, market_refresh_seconds=22,
         social_refresh_seconds=33, news_refresh_seconds=44,
+        alpha_scan_interval_seconds=45,
         wallet_analysis_interval_seconds=55, wallet_scoring_interval_seconds=66,
         wallet_monitor_interval_seconds=67,
         wallet_reputation_interval_seconds=68,
@@ -28,6 +29,7 @@ def test_scheduler_jobs_use_configured_intervals():
     jobs = {job.id: int(job.trigger.interval.total_seconds()) for job in scheduler.get_jobs()}
     assert jobs == {
         "blockchain": 11, "market": 22, "social": 33, "news": 44,
+        "alpha_scan_new_launches": 45,
         "wallet_analysis": 55, "wallet_scoring": 66,
         "candidate_wallet_discovery": 70, "candidate_cost_basis_enrichment": 74,
         "wallet_position_reconstruction": 74, "candidate_wallet_scoring": 71,

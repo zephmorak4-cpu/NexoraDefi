@@ -15,6 +15,7 @@ from app.models.intelligence import WalletReview
 from app.models.smart_money import SmartMoneySignal, WalletMetric, WalletPosition, WalletScore
 from app.models.solana_smart_money import TokenQuality, TrackedWallet, WalletActivity
 from app.models.token_intelligence import MomentumMetric, TokenGrowthMetric
+from app.models.alpha import AlphaAlertHistory, AlphaScannedToken, AlphaSmartWallet, AlphaWatchlistToken
 
 __all__ = [
     "Alert",
@@ -42,4 +43,8 @@ __all__ = [
     "CandidatePortfolioSnapshot",
     "CandidateTokenHistory",
     "WalletReview",
+    "AlphaScannedToken",
+    "AlphaAlertHistory",
+    "AlphaWatchlistToken",
+    "AlphaSmartWallet",
 ]

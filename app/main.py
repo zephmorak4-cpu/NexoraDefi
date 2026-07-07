@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.alpha_discovery.api import router as alpha_discovery_router
 from app.analyst.analyst_api import router as analyst_router
 from app.api.routes import router
 from app.api.risk import router as risk_router
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, version="1.0.0-mvp", lifespan=lifespan)
 app.include_router(router)
+app.include_router(alpha_discovery_router)
 app.include_router(smart_money_router)
 app.include_router(token_intelligence_router)
 app.include_router(risk_router)
