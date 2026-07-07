@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.alpha_discovery.types import TokenLaunch, TokenTxns
-from app.alpha_discovery.utils import number
+from app.alpha_discovery.birdeye_provider import BirdeyeService
+from app.alpha_discovery.dexscreener_provider import DexScreenerService
+from app.alpha_discovery.helius_provider import HeliusService
+from app.alpha_discovery.normalize import merge_token_data
+from app.alpha_discovery.provider_health import ProviderHealthService
+from app.alpha_discovery.solana_rpc_provider import SolanaRPCService
+from app.alpha_discovery.types import TokenLaunch
+from app.alpha_discovery.utils import safe_provider_call
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.http import AsyncAPIClient
@@ -13,72 +20,101 @@ logger = get_logger(__name__)
 
 
 class MarketDataService:
-    def __init__(self, settings: Settings, client: AsyncAPIClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: AsyncAPIClient | None = None,
+        dexscreener: DexScreenerService | None = None,
+        birdeye: BirdeyeService | None = None,
+        helius: HeliusService | None = None,
+        solana_rpc: SolanaRPCService | None = None,
+        health: ProviderHealthService | None = None,
+    ) -> None:
         self.settings = settings
-        self.client = client or AsyncAPIClient(
-            "https://api.dexscreener.com",
-            timeout=settings.http_timeout_seconds,
-            max_retries=settings.http_max_retries,
-        )
+        self.dexscreener = dexscreener or DexScreenerService(settings, client=client)
+        self.birdeye = birdeye or BirdeyeService(settings)
+        self.helius = helius or HeliusService(settings)
+        self.solana_rpc = solana_rpc or SolanaRPCService(settings)
+        self.health = health or ProviderHealthService()
 
     async def latest_solana_launches(self) -> list[TokenLaunch]:
-        payload = await self.client.request_json("GET", "/token-profiles/latest/v1")
-        profiles = payload if isinstance(payload, list) else []
-        launches: list[TokenLaunch] = []
-        for profile in profiles:
-            if not isinstance(profile, dict) or profile.get("chainId") != "solana":
-                continue
-            token = str(profile.get("tokenAddress") or "")
-            if not token:
-                continue
-            launches.extend(await self._pairs_for_token(token, profile))
-            if len(launches) >= self.settings.alpha_launch_scan_limit:
-                break
-        logger.info("alpha_market_data_launches_loaded", count=len(launches))
-        return launches[: self.settings.alpha_launch_scan_limit]
+        return await self.get_new_solana_launches()
 
-    async def _pairs_for_token(self, token: str, profile: dict[str, Any]) -> list[TokenLaunch]:
+    async def get_new_solana_launches(self) -> list[TokenLaunch]:
+        result = await safe_provider_call("DEXSCREENER", self.dexscreener.get_latest_solana_pairs)
+        if not result.ok:
+            self.health.failure(result.provider, result.error)
+            logger.warning("[LaunchDetector] Provider: DEXSCREENER unavailable")
+            return []
+        self.health.success(result.provider)
+        launches = [token for token in (result.data or []) if self._within_lookback(token)]
+        logger.info("[LaunchDetector] Provider: DEXSCREENER")
+        logger.info("[LaunchDetector] New Solana launches found: %s", len(launches))
+        deduped = self._dedupe(launches)
+        logger.info("[LaunchDetector] After dedupe: %s", len(deduped))
+        enriched: list[TokenLaunch] = []
+        for token in deduped[: self.settings.alpha_launch_scan_limit]:
+            enriched.append(await self.get_enriched_token_data(token))
+        logger.info("alpha_market_data_launches_loaded", count=len(enriched), provider_health=self.health.snapshot())
+        return enriched
+
+    async def get_enriched_token_data(self, token: TokenLaunch | str) -> TokenLaunch:
+        launch = token if isinstance(token, TokenLaunch) else TokenLaunch(token_address=token)
+        updates: list[dict[str, Any]] = []
+        if self.settings.birdeye_enabled:
+            result = await safe_provider_call("BIRDEYE", lambda: self.birdeye.enrich(launch.token_address))
+            if result.ok and result.data:
+                self.health.success(result.provider)
+                updates.append(result.data)
+            else:
+                self.health.failure(result.provider, result.error or "unavailable")
+        if self.settings.helius_enabled:
+            result = await safe_provider_call("HELIUS", lambda: self.helius.enrich(launch.token_address))
+            if result.ok and result.data:
+                self.health.success(result.provider)
+                updates.append(result.data)
+            else:
+                self.health.failure(result.provider, result.error or "unavailable")
+        if self.settings.solana_rpc_enabled:
+            result = await safe_provider_call("SOLANA_RPC", lambda: self.solana_rpc.enrich(launch.token_address))
+            if result.ok and result.data:
+                self.health.success(result.provider)
+                updates.append(result.data)
+            else:
+                self.health.failure(result.provider, result.error or "unavailable")
+        return merge_token_data(launch, *updates)
+
+    async def get_token_risk_data(self, token_address: str) -> TokenLaunch:
+        return await self.get_enriched_token_data(token_address)
+
+    async def get_token_momentum_data(self, token_address: str) -> TokenLaunch:
+        return await self.get_enriched_token_data(token_address)
+
+    def _within_lookback(self, token: TokenLaunch) -> bool:
+        if not token.launch_time:
+            return True
         try:
-            payload = await self.client.request_json("GET", f"/token-pairs/v1/solana/{token}")
-        except Exception as exc:
-            logger.warning("alpha_pair_lookup_failed", token=token, error=type(exc).__name__)
-            return [self._from_profile(profile)]
-        pairs = payload if isinstance(payload, list) else []
-        launches = [self._from_pair(pair, profile) for pair in pairs if isinstance(pair, dict)]
-        return launches or [self._from_profile(profile)]
+            timestamp = datetime.fromtimestamp(int(token.launch_time) / 1000, tz=timezone.utc)
+        except (TypeError, ValueError):
+            return True
+        return timestamp >= datetime.now(timezone.utc) - timedelta(minutes=self.settings.new_pair_lookback_minutes)
 
     @staticmethod
-    def _from_profile(profile: dict[str, Any]) -> TokenLaunch:
-        return TokenLaunch(
-            token_address=str(profile.get("tokenAddress") or ""),
-            source="dexscreener-profile",
-            dex="unknown",
-        )
-
-    @staticmethod
-    def _from_pair(pair: dict[str, Any], profile: dict[str, Any]) -> TokenLaunch:
-        base = pair.get("baseToken") or {}
-        liquidity = pair.get("liquidity") or {}
-        volume = pair.get("volume") or {}
-        txns = pair.get("txns") or {}
-        h24 = txns.get("h24") or {}
-        return TokenLaunch(
-            token_address=str(base.get("address") or profile.get("tokenAddress") or ""),
-            pair_address=pair.get("pairAddress"),
-            symbol=base.get("symbol"),
-            name=base.get("name"),
-            launch_time=str(pair.get("pairCreatedAt")) if pair.get("pairCreatedAt") else None,
-            dex=pair.get("dexId"),
-            source="dexscreener",
-            liquidity_usd=number(liquidity.get("usd")),
-            market_cap_usd=number(pair.get("marketCap") or pair.get("fdv")),
-            price_usd=number(pair.get("priceUsd")),
-            volume_usd=number(volume.get("h24")),
-            txns=TokenTxns(buys=int(h24.get("buys") or 0), sells=int(h24.get("sells") or 0)),
-        )
+    def _dedupe(tokens: list[TokenLaunch]) -> list[TokenLaunch]:
+        seen: set[str] = set()
+        deduped: list[TokenLaunch] = []
+        for token in tokens:
+            if token.token_address in seen:
+                continue
+            seen.add(token.token_address)
+            deduped.append(token)
+        return deduped
 
     async def close(self) -> None:
-        await self.client.close()
+        await self.dexscreener.close()
+        await self.birdeye.close()
+        await self.helius.close()
+        await self.solana_rpc.close()
 
 
 class TelegramAlphaService:

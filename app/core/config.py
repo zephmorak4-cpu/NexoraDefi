@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_chat_id: int | None = None
     discord_webhook_url: str | None = None
+    birdeye_api_key: str | None = None
+    helius_api_key: str | None = None
+    solana_rpc_url: str = "https://api.mainnet-beta.solana.com"
 
     etherscan_chain_id: int = 1
     moralis_chain: str = "solana"
@@ -40,6 +43,13 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 15.0
     http_max_retries: int = 3
     scheduler_enabled: bool = True
+    dexscreener_enabled: bool = True
+    birdeye_enabled: bool = True
+    helius_enabled: bool = True
+    solana_rpc_enabled: bool = True
+    provider_timeout_ms: int = 10000
+    provider_retry_count: int = 2
+    new_pair_lookback_minutes: int = 30
     alpha_scan_interval_seconds: int = 300
     alpha_min_liquidity_usd: float = 5000
     alpha_max_initial_market_cap_usd: float = 500000
@@ -254,6 +264,9 @@ class Settings(BaseSettings):
         "alpha_smart_wallet_lookback_hours",
         "alpha_report_interval_seconds",
         "alpha_report_token_limit",
+        "provider_timeout_ms",
+        "provider_retry_count",
+        "new_pair_lookback_minutes",
         "alpha_launch_scan_limit",
         "wallet_analysis_interval_seconds",
         "wallet_scoring_interval_seconds",

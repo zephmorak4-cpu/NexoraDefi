@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +20,7 @@ from app.alpha_discovery.services import DiscordAlphaService, MarketDataService,
 from app.alpha_discovery.types import AgentScore, DecisionResult, RiskScore, SmartMoneyScore, TokenLaunch
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.models import AlphaAlertHistory, AlphaScannedToken, AlphaWatchlistToken
+from app.models import AlphaAlertHistory, AlphaProviderSnapshot, AlphaScannedToken, AlphaWatchlistToken
 
 logger = get_logger(__name__)
 
@@ -45,9 +46,11 @@ class SolanaAlphaDiscoveryEngine:
         self.momentum = MomentumAgent()
         self.risk = RiskAgent(settings)
         self.decision = DecisionAgent(settings)
+        self.scan_id: str | None = None
 
     async def scan(self) -> dict[str, int]:
-        tokens = await self.detector.detect()
+        self.scan_id = uuid4().hex
+        tokens = await self.detector.detect(self.session, self.settings)
         logger.info("alpha_launch_detector_complete", count=len(tokens))
         counts = {"scanned": 0, "alerts": 0, "watchlist": 0, "rejected": 0}
         for token in tokens:
@@ -93,6 +96,7 @@ class SolanaAlphaDiscoveryEngine:
             if sent:
                 self.session.add(
                     AlphaAlertHistory(
+                        scan_id=self.scan_id,
                         token_address=token.token_address,
                         decision=decision.decision,
                         final_score=Decimal(str(decision.final_score)),
@@ -125,6 +129,7 @@ class SolanaAlphaDiscoveryEngine:
         )
         if row is None:
             row = AlphaScannedToken(token_address=token.token_address, pair_address=token.pair_address)
+        row.scan_id = self.scan_id
         row.symbol = token.symbol
         row.name = token.name
         row.creator_wallet = token.creator_wallet
@@ -149,6 +154,17 @@ class SolanaAlphaDiscoveryEngine:
             "risk": risk.score,
         }
         self.session.add(row)
+        for snapshot in token.provider_snapshots:
+            self.session.add(
+                AlphaProviderSnapshot(
+                    scan_id=self.scan_id,
+                    token_address=token.token_address,
+                    pair_address=token.pair_address,
+                    provider=snapshot.provider,
+                    raw_response_json=snapshot.raw_response,
+                    normalized_data_json=snapshot.normalized_data,
+                )
+            )
 
     async def _watchlist(self, token: TokenLaunch, decision: DecisionResult) -> None:
         row = await self.session.scalar(

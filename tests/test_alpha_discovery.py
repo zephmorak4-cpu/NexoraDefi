@@ -1,21 +1,26 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
+from json import loads as json_loads
 from zipfile import ZipFile
 
 import httpx
 from sqlalchemy import select
 
 from app.alpha_discovery import api as alpha_api
-from app.alpha_discovery.agents import DecisionAgent, LaunchQualityAgent, RiskAgent, SmartMoneyAgent
+from app.alpha_discovery.agents import DecisionAgent, LaunchDetectorAgent, LaunchQualityAgent, RiskAgent, SmartMoneyAgent
+from app.alpha_discovery.birdeye_provider import BirdeyeService
+from app.alpha_discovery.dexscreener_provider import DexScreenerService
 from app.alpha_discovery.engine import SolanaAlphaDiscoveryEngine
 from app.alpha_discovery.format_alert import format_alpha_alert
+from app.alpha_discovery.helius_provider import HeliusService
 from app.alpha_discovery.report import AlphaDiscoveryReportExporter, build_watchlist_digest
 from app.alpha_discovery.services import MarketDataService
-from app.alpha_discovery.types import AgentScore, RiskScore, SmartMoneyScore, TokenLaunch, TokenTxns
+from app.alpha_discovery.solana_rpc_provider import SolanaRPCService
+from app.alpha_discovery.types import AgentScore, ProviderSnapshot, RiskScore, SmartMoneyScore, TokenLaunch, TokenTxns
 from app.core.config import Settings
 from app.main import app
-from app.models import AlphaAlertHistory, AlphaScannedToken, AlphaWatchlistToken, CandidateHistory, CandidateWallet, TrackedWallet, WalletActivity
+from app.models import AlphaAlertHistory, AlphaProviderSnapshot, AlphaScannedToken, AlphaWatchlistToken, CandidateHistory, CandidateWallet, TrackedWallet, WalletActivity
 
 
 def _launch(**overrides):
@@ -30,6 +35,7 @@ def _launch(**overrides):
         "market_cap_usd": 180_000,
         "price_usd": 0.001,
         "volume_usd": 95_000,
+        "volume_usd_24h": 95_000,
         "txns": TokenTxns(buys=90, sells=20),
     }
     values.update(overrides)
@@ -169,7 +175,20 @@ async def test_engine_persists_scan_and_sends_alert_without_trade_execution(db_s
     engine = SolanaAlphaDiscoveryEngine(
         db_session,
         Settings(telegram_alerts_enabled=True),
-        market_data=FakeMarketData([_launch()]),
+        market_data=FakeMarketData(
+            [
+                _launch(
+                    provider_snapshots=[
+                        ProviderSnapshot(
+                            "DEXSCREENER",
+                            {"pairAddress": "AlphaPair11111111111111111111111111111111111"},
+                            {"liquidityUsd": 42000},
+                        )
+                    ],
+                    sources=["DEX Screener"],
+                )
+            ]
+        ),
         telegram=telegram,
     )
     engine.developer = FixedAgent(95)
@@ -180,22 +199,29 @@ async def test_engine_persists_scan_and_sends_alert_without_trade_execution(db_s
 
     scanned = await db_session.scalar(select(AlphaScannedToken))
     alert = await db_session.scalar(select(AlphaAlertHistory))
+    snapshot = await db_session.scalar(select(AlphaProviderSnapshot))
     assert counts == {"scanned": 1, "alerts": 1, "watchlist": 0, "rejected": 0}
     assert scanned.token_address == "AlphaToken1111111111111111111111111111111111"
+    assert scanned.scan_id is not None
     assert scanned.should_alert is True
+    assert snapshot.provider == "DEXSCREENER"
     assert alert.channel == "telegram"
+    assert alert.scan_id == scanned.scan_id
     assert len(telegram.messages) == 1
     assert "Alert only. No auto-buying" in telegram.messages[0]
 
 
 async def test_market_data_profile_fallback_when_pair_lookup_fails():
-    market_data = MarketDataService(Settings(), client=FakeDexClient())
+    market_data = MarketDataService(
+        Settings(birdeye_enabled=False, helius_enabled=False, solana_rpc_enabled=False),
+        client=FakeDexClient(),
+    )
 
     launches = await market_data.latest_solana_launches()
 
     assert len(launches) == 1
     assert launches[0].token_address == "FallbackToken"
-    assert launches[0].source == "dexscreener-profile"
+    assert launches[0].source == "DEXSCREENER"
     await market_data.close()
 
 
@@ -217,6 +243,8 @@ def test_alpha_alert_message_explains_addresses_and_manual_review():
     assert "Pair Address:" in message
     assert "Overall Alpha Score:" in message
     assert "Review manually" in message
+    assert "5m Volume:" in message
+    assert "Sources:" in message
 
 
 async def test_alpha_admin_api_returns_plain_english_token_breakdown(db_session, monkeypatch):
@@ -311,3 +339,128 @@ def test_watchlist_digest_is_plain_english():
     assert "monitor-only tokens" in digest
     assert "Token Address:" in digest
     assert "buy instructions" in digest
+
+
+class FakeProviderClient:
+    def __init__(self, responses):
+        self.responses = responses
+
+    async def request_json(self, method, path, **kwargs):
+        value = self.responses[path]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def close(self):
+        return None
+
+
+async def test_dexscreener_service_normalizes_solana_pair_data():
+    client = FakeProviderClient(
+        {
+            "/token-pairs/v1/solana/TokenMint": [
+                {
+                    "chainId": "solana",
+                    "pairAddress": "PairMint",
+                    "dexId": "meteora",
+                    "baseToken": {"address": "TokenMint", "symbol": "TOK", "name": "Token"},
+                    "liquidity": {"usd": "42000"},
+                    "marketCap": "180000",
+                    "fdv": "250000",
+                    "priceUsd": "0.000012",
+                    "volume": {"h24": "95000", "h1": "12000", "m5": "1800"},
+                    "txns": {"h24": {"buys": 90, "sells": 20}, "h1": {"buys": 42, "sells": 17}, "m5": {"buys": 8, "sells": 3}},
+                    "pairCreatedAt": 1783440000000,
+                }
+            ]
+        }
+    )
+
+    pairs = await DexScreenerService(Settings(), client=client).get_token_pairs("TokenMint")
+
+    assert pairs[0].token_address == "TokenMint"
+    assert pairs[0].source == "DEXSCREENER"
+    assert pairs[0].fdv_usd == 250000
+    assert pairs[0].volume_usd_5m == 1800
+    assert pairs[0].txns_5m.buys == 8
+
+
+async def test_birdeye_missing_api_key_fallback_does_not_crash():
+    data = await BirdeyeService(Settings(birdeye_api_key=None)).enrich("TokenMint")
+
+    assert data["_source"] == "Birdeye"
+    assert data["holder_count"] is None
+
+
+async def test_helius_missing_api_key_fallback_does_not_crash():
+    data = await HeliusService(Settings(helius_api_key=None)).enrich("TokenMint")
+
+    assert data["_source"] == "Helius"
+    assert data["_snapshot"].provider == "HELIUS"
+
+
+async def test_solana_rpc_fallback_normalizes_authority_and_holder_data():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json_loads(request.content)
+        method = body["method"]
+        if method == "getTokenSupply":
+            return httpx.Response(200, json={"result": {"value": {"uiAmount": 1000}}})
+        if method == "getTokenLargestAccounts":
+            return httpx.Response(200, json={"result": {"value": [{"uiAmount": 100}, {"uiAmount": 50}]}})
+        return httpx.Response(
+            200,
+            json={
+                "result": {
+                    "value": {
+                        "data": {
+                            "parsed": {
+                                "info": {
+                                    "mintAuthority": None,
+                                    "freezeAuthority": "FreezeAuth",
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    client = httpx.AsyncClient(base_url="https://rpc.test", transport=httpx.MockTransport(handler))
+    data = await SolanaRPCService(Settings(), client=client).enrich("TokenMint")
+
+    assert data["top10_holder_percent"] == 15
+    assert data["mint_authority_active"] is False
+    assert data["freeze_authority_active"] is True
+    await client.aclose()
+
+
+async def test_launch_detector_dedupes_and_ignores_recently_scanned_tokens(db_session):
+    db_session.add(
+        AlphaScannedToken(
+            token_address="AlreadyScanned",
+            pair_address="PairOld",
+            source="test",
+            buys=1,
+            sells=1,
+            final_score=1,
+            decision="IGNORE",
+            should_alert=False,
+            rejection_reasons=[],
+            agent_scores={},
+        )
+    )
+    await db_session.commit()
+
+    detector = LaunchDetectorAgent(
+        FakeMarketData(
+            [
+                _launch(token_address="AlreadyScanned"),
+                _launch(token_address="FreshToken"),
+                _launch(token_address="FreshToken", pair_address="OtherPair"),
+            ]
+        )
+    )
+
+    launches = await detector.detect(db_session, Settings())
+
+    assert [launch.token_address for launch in launches] == ["FreshToken"]

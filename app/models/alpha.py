@@ -15,6 +15,7 @@ class AlphaScannedToken(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    scan_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     token_address: Mapped[str] = mapped_column(String(128), index=True)
     pair_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
     symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -43,6 +44,7 @@ class AlphaAlertHistory(Base):
     __table_args__ = (Index("ix_alpha_alert_token_created", "token_address", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    scan_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     token_address: Mapped[str] = mapped_column(String(128), index=True)
     decision: Mapped[str] = mapped_column(String(32))
     final_score: Mapped[Decimal] = mapped_column(Numeric(7, 4))
@@ -74,3 +76,17 @@ class AlphaSmartWallet(Base):
     win_rate: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AlphaProviderSnapshot(Base):
+    __tablename__ = "alpha_provider_snapshots"
+    __table_args__ = (Index("ix_alpha_provider_snapshot_token_created", "token_address", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scan_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    token_address: Mapped[str] = mapped_column(String(128), index=True)
+    pair_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    raw_response_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    normalized_data_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
