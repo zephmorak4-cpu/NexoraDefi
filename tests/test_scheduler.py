@@ -12,6 +12,7 @@ def test_scheduler_jobs_use_configured_intervals():
         token_quality_interval_seconds=69,
         candidate_discovery_interval_seconds=70,
         candidate_scoring_interval_seconds=71,
+        position_reconstruction_interval_seconds=74,
         candidate_promotion_interval_seconds=72,
         elite_demotion_interval_seconds=73,
         smart_money_signal_interval_seconds=77,
@@ -28,7 +29,7 @@ def test_scheduler_jobs_use_configured_intervals():
     assert jobs == {
         "blockchain": 11, "market": 22, "social": 33, "news": 44,
         "wallet_analysis": 55, "wallet_scoring": 66,
-        "candidate_wallet_discovery": 70, "candidate_wallet_scoring": 71,
+        "candidate_wallet_discovery": 70, "wallet_position_reconstruction": 74, "candidate_wallet_scoring": 71,
         "elite_wallet_demotions": 73,
         "solana_wallet_monitor": 67, "solana_wallet_reputation": 68, "solana_token_quality": 69,
         "solana_smart_money_signals": 77, "legacy_smart_money_signals": 77,

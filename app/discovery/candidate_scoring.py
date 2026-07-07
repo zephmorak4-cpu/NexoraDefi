@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import CandidateHistory, CandidateWallet, TokenQuality, WalletActivity
+from app.models import CandidateHistory, CandidateWallet, TokenQuality, WalletActivity, WalletPosition
 from app.services.smart_money import aware, clamp
 
 
@@ -36,15 +36,16 @@ class CandidateScoringEngine:
             await provider.close()
 
     async def score_wallet(self, wallet: CandidateWallet) -> Decimal:
-        history = await self._history(wallet.id)
-        if not history:
+        positions = await self._positions(wallet.id)
+        closed = [item for item in positions if item.position_status == "CLOSED"]
+        if not closed:
             return Decimal("0")
-        transaction_size = self._transaction_size(history)
-        consistency = self._consistency(history)
-        early_entry = self._early_entry(history)
-        token_quality = await self._token_quality(history)
-        holding = self._holding_behaviour(history)
-        network = await self._network_influence(history)
+        transaction_size = clamp(self._avg([Decimal(item.maximum_position_size or 0) for item in positions]) / Decimal("1000"))
+        consistency = clamp(Decimal(len(closed)) * Decimal("15"))
+        early_entry = clamp(self._avg([Decimal(item.position_quality_score or 0) for item in closed]))
+        token_quality = await self._token_quality_from_positions(positions)
+        holding = self._holding_discipline(closed)
+        network = await self._network_influence_from_positions(positions)
         weights = self.settings.candidate_score_weights
         return clamp(
             transaction_size * Decimal(str(weights["transaction_size"]))
@@ -56,21 +57,36 @@ class CandidateScoringEngine:
         )
 
     async def reputation_score(self, wallet: CandidateWallet) -> Decimal:
-        history = await self._history(wallet.id)
-        if not history:
+        positions = await self._positions(wallet.id)
+        closed = [item for item in positions if item.position_status == "CLOSED"]
+        if not closed:
             return Decimal("0")
         win_proxy = await self.historical_accuracy(wallet)
-        size = self._transaction_size(history)
-        consistency = self._consistency(history)
-        quality = await self._token_quality(history)
-        return clamp(win_proxy * Decimal("0.35") + size * Decimal("0.25") + consistency * Decimal("0.20") + quality * Decimal("0.20"))
+        returns = self._avg([Decimal(item.realized_roi or 0) for item in closed])
+        consistency = clamp(Decimal(len(closed)) * Decimal("15"))
+        quality = self._avg([Decimal(item.position_quality_score or 0) for item in closed])
+        risk = clamp(Decimal("100") - self._avg([Decimal(item.maximum_drawdown or 0) for item in closed]))
+        return clamp(win_proxy * Decimal("0.30") + clamp(returns + Decimal("50")) * Decimal("0.20") + consistency * Decimal("0.15") + quality * Decimal("0.20") + risk * Decimal("0.15"))
 
     async def historical_accuracy(self, wallet: CandidateWallet) -> Decimal:
-        history = await self._history(wallet.id)
-        if not history:
+        closed = [item for item in await self._positions(wallet.id) if item.position_status == "CLOSED"]
+        if not closed:
             return Decimal("0")
-        good_actions = sum(1 for item in history if item.action.lower() in {"buy", "swap", "accumulate", "liquidity_add", "stake"})
-        return clamp(Decimal(good_actions) / Decimal(len(history)) * Decimal("100"))
+        winners = sum(1 for item in closed if Decimal(item.realized_roi or 0) > 0)
+        return clamp(Decimal(winners) / Decimal(len(closed)) * Decimal("100"))
+
+    async def _positions(self, wallet_id: int) -> list[WalletPosition]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(WalletPosition).where(WalletPosition.candidate_wallet_id == wallet_id)
+                )
+            ).all()
+        )
+
+    @staticmethod
+    def _avg(values: list[Decimal]) -> Decimal:
+        return sum(values, Decimal("0")) / Decimal(len(values)) if values else Decimal("0")
 
     async def _history(self, wallet_id: int) -> list[CandidateHistory]:
         return list(
@@ -106,6 +122,15 @@ class CandidateScoringEngine:
         )
         return Decimal(str(quality or 50))
 
+    async def _token_quality_from_positions(self, positions: list[WalletPosition]) -> Decimal:
+        tokens = {item.token_address for item in positions if item.token_address}
+        if not tokens:
+            return Decimal("0")
+        quality = await self.session.scalar(
+            select(func.avg(TokenQuality.quality_score)).where(TokenQuality.token_address.in_(tokens))
+        )
+        return Decimal(str(quality or 50))
+
     @staticmethod
     def _holding_behaviour(history: list[CandidateHistory]) -> Decimal:
         buys = sum(1 for item in history if item.action.lower() in {"buy", "swap", "accumulate", "stake"})
@@ -120,3 +145,22 @@ class CandidateScoringEngine:
             select(func.count(func.distinct(WalletActivity.wallet_id))).where(WalletActivity.token_address.in_(tokens))
         )
         return clamp(Decimal(str(aligned or 0)) * Decimal("25"))
+
+    async def _network_influence_from_positions(self, positions: list[WalletPosition]) -> Decimal:
+        tokens = {item.token_address for item in positions if item.token_address}
+        if not tokens:
+            return Decimal("0")
+        aligned = await self.session.scalar(
+            select(func.count(func.distinct(WalletActivity.wallet_id))).where(WalletActivity.token_address.in_(tokens))
+        )
+        return clamp(Decimal(str(aligned or 0)) * Decimal("25"))
+
+    @staticmethod
+    def _holding_discipline(positions: list[WalletPosition]) -> Decimal:
+        if not positions:
+            return Decimal("0")
+        quality = [
+            Decimal("100") if Decimal(item.holding_period or 0) >= 1 else Decimal("45")
+            for item in positions
+        ]
+        return sum(quality, Decimal("0")) / Decimal(len(quality))

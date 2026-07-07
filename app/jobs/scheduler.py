@@ -30,6 +30,7 @@ from app.smart_money.wallet_jobs import (
     recalculate_solana_token_quality,
     recalculate_solana_wallet_reputation,
 )
+from app.trade_reconstruction.trade_reconstruction_jobs import rebuild_wallet_positions
 
 
 def build_scheduler(settings: Settings) -> AsyncIOScheduler:
@@ -42,6 +43,7 @@ def build_scheduler(settings: Settings) -> AsyncIOScheduler:
         (analyze_wallets, "wallet_analysis", settings.wallet_analysis_interval_seconds),
         (recalculate_wallet_scores, "wallet_scoring", settings.wallet_scoring_interval_seconds),
         (discover_candidate_wallets, "candidate_wallet_discovery", settings.candidate_discovery_interval_seconds),
+        (rebuild_wallet_positions, "wallet_position_reconstruction", settings.position_reconstruction_interval_seconds),
         (update_candidate_scores, "candidate_wallet_scoring", settings.candidate_scoring_interval_seconds),
         (evaluate_elite_demotions, "elite_wallet_demotions", settings.elite_demotion_interval_seconds),
         (monitor_solana_wallets, "solana_wallet_monitor", settings.wallet_monitor_interval_seconds),

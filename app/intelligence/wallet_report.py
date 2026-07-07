@@ -10,9 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.wallet_history import WalletHistoryService
-from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet, WalletReview
+from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet, WalletPosition, WalletReview
 from app.pipeline.pipeline_state import PipelineStage, stage_at_least
 from app.services.smart_money import aware, clamp
+from app.trade_reconstruction.position_metrics import PositionMetrics
+from app.trade_reconstruction.position_summary import PositionSummary
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ class WalletIntelligenceReport:
     recommendation_reasoning: str
     review_status: str
     approved_for_signals: bool
+    position_summary: dict[str, object]
+    investment_timeline: list[str]
 
 
 class WalletReportEngine:
@@ -74,8 +78,9 @@ class WalletReportEngine:
         history = await WalletHistoryService(self.session).for_candidate(wallet_id, limit=1000)
         portfolio = await self._latest_portfolio(wallet_id)
         token_history = await self._token_history(wallet_id)
+        positions = await self._positions(wallet_id)
         review = await self._review(wallet_id)
-        return self._build(wallet, history, review, portfolio, token_history)
+        return self._build(wallet, history, review, portfolio, token_history, positions)
 
     async def reports(self) -> list[WalletIntelligenceReport]:
         wallets = list(
@@ -106,6 +111,13 @@ class WalletReportEngine:
             ).all()
         )
 
+    async def _positions(self, wallet_id: int) -> list[WalletPosition]:
+        return list(
+            (
+                await self.session.scalars(select(WalletPosition).where(WalletPosition.candidate_wallet_id == wallet_id))
+            ).all()
+        )
+
     def _build(
         self,
         wallet: CandidateWallet,
@@ -113,6 +125,7 @@ class WalletReportEngine:
         review: WalletReview | None,
         portfolio: CandidatePortfolioSnapshot | None,
         token_history: list[CandidateTokenHistory],
+        positions: list[WalletPosition],
     ) -> WalletIntelligenceReport:
         now = datetime.now(tz=aware(wallet.first_seen).tzinfo)
         first_seen = aware(wallet.first_seen)
@@ -123,16 +136,18 @@ class WalletReportEngine:
         buys = [Decimal(item.usd_value or 0) for item in history if item.action.lower() in {"buy", "swap", "accumulate"}]
         sells = [Decimal(item.usd_value or 0) for item in history if item.action.lower() in {"sell", "out"}]
         sizes = [Decimal(item.usd_value or 0) for item in history]
-        holding_days = self._holding_days(history)
-        roi_values = self._roi_values(history)
+        closed_positions = [position for position in positions if position.position_status == "CLOSED"]
+        holding_days = [Decimal(position.holding_period or 0) for position in positions]
+        roi_values = [Decimal(position.realized_roi or 0) for position in closed_positions]
         average_roi = self._avg(roi_values)
         median_roi = Decimal(str(median(roi_values))) if roi_values else Decimal("0")
         total_roi = sum(roi_values, Decimal("0"))
         risk_score = self._risk_score(wallet, history)
-        copy_score = self._copy_performance_score(wallet, average_roi, risk_score, total_trades)
-        conviction = self._conviction_score(wallet, history)
+        copy_score = self._copy_performance_score_from_positions(wallet, positions, risk_score)
+        conviction = self._conviction_score_from_positions(positions)
         trading_style, style_reason = self._trading_style(wallet, history)
-        recommendation, reasoning = self._recommendation(copy_score, Decimal(wallet.reputation_score), Decimal(wallet.historical_accuracy_score), risk_score, total_trades)
+        recommendation, reasoning = self._recommendation(copy_score, Decimal(wallet.reputation_score), Decimal(wallet.historical_accuracy_score), risk_score, len(closed_positions))
+        position_summary = PositionSummary().build(positions)
         return WalletIntelligenceReport(
             wallet_id=wallet.id,
             wallet_address=wallet.wallet_address,
@@ -163,10 +178,10 @@ class WalletReportEngine:
             average_roi=average_roi,
             median_roi=median_roi,
             total_roi=total_roi,
-            maximum_drawdown=self._maximum_drawdown(roi_values),
-            profit_factor=self._profit_factor(roi_values),
-            sharpe_ratio=self._sharpe_ratio(roi_values),
-            consistency=Decimal(wallet.candidate_score),
+            maximum_drawdown=self._position_drawdown(positions),
+            profit_factor=PositionMetrics().profit_factor(positions),
+            sharpe_ratio=PositionMetrics().sharpe_ratio(positions),
+            consistency=self._position_consistency(positions),
             conviction_score=conviction,
             risk_score=risk_score,
             risk_classification=self._risk_classification(risk_score),
@@ -176,6 +191,8 @@ class WalletReportEngine:
             recommendation_reasoning=reasoning,
             review_status=review.review_status if review else "Pending",
             approved_for_signals=bool(review.approved_for_signals) if review else False,
+            position_summary=position_summary,
+            investment_timeline=self._investment_timeline(positions),
         )
 
     @staticmethod
@@ -250,10 +267,47 @@ class WalletReportEngine:
         )
 
     @staticmethod
+    def _copy_performance_score_from_positions(
+        wallet: CandidateWallet,
+        positions: list[WalletPosition],
+        risk_score: Decimal,
+    ) -> Decimal:
+        closed = [item for item in positions if item.position_status == "CLOSED"]
+        if not closed:
+            return Decimal("0")
+        wins = sum(1 for item in closed if Decimal(item.realized_roi or 0) > 0)
+        win_rate = Decimal(wins) / Decimal(len(closed)) * Decimal("100")
+        average_roi = sum((Decimal(item.realized_roi or 0) for item in closed), Decimal("0")) / Decimal(len(closed))
+        average_quality = sum((Decimal(item.position_quality_score or 0) for item in closed), Decimal("0")) / Decimal(len(closed))
+        consistency = clamp(Decimal(len(closed)) * Decimal("15"))
+        return clamp(
+            win_rate * Decimal("0.25")
+            + clamp(average_roi + Decimal("50")) * Decimal("0.25")
+            + average_quality * Decimal("0.25")
+            + consistency * Decimal("0.15")
+            + risk_score * Decimal("0.10")
+        )
+
+    @staticmethod
     def _conviction_score(wallet: CandidateWallet, history: list[CandidateHistory]) -> Decimal:
         repeat_tokens = Counter(item.token for item in history)
         repeats = sum(1 for count in repeat_tokens.values() if count > 1)
         return clamp(Decimal(wallet.candidate_score) * Decimal("0.5") + Decimal(repeats) * Decimal("15") + Decimal(len(history)) * Decimal("3"))
+
+    @staticmethod
+    def _conviction_score_from_positions(positions: list[WalletPosition]) -> Decimal:
+        if not positions:
+            return Decimal("0")
+        average_size = sum((Decimal(item.maximum_position_size or 0) for item in positions), Decimal("0")) / Decimal(len(positions))
+        average_buys = sum((Decimal(item.number_of_buys or 0) for item in positions), Decimal("0")) / Decimal(len(positions))
+        average_hold = sum((Decimal(item.holding_period or 0) for item in positions), Decimal("0")) / Decimal(len(positions))
+        accumulation = sum((Decimal(item.accumulation_events or 0) for item in positions), Decimal("0"))
+        return clamp(
+            clamp(average_size / Decimal("1000")) * Decimal("0.30")
+            + clamp(average_buys * Decimal("20")) * Decimal("0.25")
+            + clamp(average_hold / Decimal("30") * Decimal("100")) * Decimal("0.25")
+            + clamp(accumulation * Decimal("10")) * Decimal("0.20")
+        )
 
     @staticmethod
     def _trading_style(wallet: CandidateWallet, history: list[CandidateHistory]) -> tuple[str, str]:
@@ -313,3 +367,32 @@ class WalletReportEngine:
         if risk_score < 40:
             return "Reject", "The wallet has a high-risk profile relative to the current observation data."
         return "Needs More Observation", "The wallet has not yet shown enough quality or consistency for elite status."
+
+    @staticmethod
+    def _position_drawdown(positions: list[WalletPosition]) -> Decimal:
+        return max((Decimal(item.maximum_drawdown or 0) for item in positions), default=Decimal("0"))
+
+    @staticmethod
+    def _position_consistency(positions: list[WalletPosition]) -> Decimal:
+        closed = [item for item in positions if item.position_status == "CLOSED"]
+        if not closed:
+            return Decimal("0")
+        winners = sum(1 for item in closed if Decimal(item.realized_roi or 0) > 0)
+        return clamp(Decimal(winners) / Decimal(len(closed)) * Decimal("100"))
+
+    @staticmethod
+    def _investment_timeline(positions: list[WalletPosition]) -> list[str]:
+        timeline = []
+        for position in sorted(positions, key=lambda item: item.entry_time or item.latest_activity_date):
+            steps = ["Buy"]
+            if position.accumulation_events:
+                steps.extend(["Accumulate"] * min(int(position.accumulation_events), 3))
+            if position.position_status == "PARTIALLY_CLOSED":
+                steps.append("Partial Exit")
+            if position.position_status == "CLOSED":
+                steps.append("Final Exit")
+                steps.append(f"ROI {Decimal(position.realized_roi or 0):.2f}%")
+            elif position.position_status == "OPEN":
+                steps.append("Hold")
+            timeline.append(f"{position.token_address}: " + " -> ".join(steps))
+        return timeline

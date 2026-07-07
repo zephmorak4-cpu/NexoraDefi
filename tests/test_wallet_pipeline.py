@@ -28,12 +28,12 @@ async def _candidate(db_session, events: list[CandidateHistory] | None = None) -
     return wallet
 
 
-def _history(action: str, token: str, days_ago: int, value: str) -> CandidateHistory:
+def _history(action: str, token: str, days_ago: int, value: str, amount: str = "10") -> CandidateHistory:
     return CandidateHistory(
         wallet_id=0,
         token=token,
         action=action,
-        amount=Decimal("10"),
+        amount=Decimal(amount),
         usd_value=Decimal(value),
         timestamp=datetime.now(timezone.utc) - timedelta(days=days_ago),
     )
@@ -61,7 +61,7 @@ async def test_pipeline_scores_only_after_ordered_evidence_stages_complete(db_se
         [
             _history("buy", "TokenA", 8, "1000"),
             _history("buy", "TokenA", 7, "1100"),
-            _history("sell", "TokenA", 6, "1500"),
+            _history("sell", "TokenA", 6, "2500", amount="20"),
             _history("swap", "TokenB", 5, "2000"),
             _history("sell", "TokenB", 4, "1800"),
         ],

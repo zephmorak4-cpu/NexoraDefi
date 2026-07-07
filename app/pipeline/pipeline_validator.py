@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from decimal import Decimal
 
-from app.models import CandidateHistory
+from app.models import CandidateHistory, WalletPosition
 from app.models import CandidatePortfolioSnapshot, CandidateTokenHistory
 
 
@@ -37,7 +37,10 @@ class WalletPipelineValidator:
         self,
         history: list[CandidateHistory],
         token_history: list[CandidateTokenHistory] | None = None,
+        positions: list[WalletPosition] | None = None,
     ) -> bool:
+        if positions and any(item.position_status == "CLOSED" for item in positions):
+            return True
         if token_history and any(item.roi is not None and item.sale_count > 0 for item in token_history):
             return True
         actions = {item.action.lower() for item in history}

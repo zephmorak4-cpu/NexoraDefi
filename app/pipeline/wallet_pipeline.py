@@ -7,10 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.wallet_classifier import WalletClassifier
 from app.core.logging import get_logger
-from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet
+from app.models import CandidateHistory, CandidatePortfolioSnapshot, CandidateTokenHistory, CandidateWallet, WalletPosition
 from app.pipeline.wallet_ingestion import StoredWalletEvidenceProvider, WalletEvidenceProvider
 from app.pipeline.pipeline_state import PipelineStage, PipelineStatus, normalize_stage
 from app.pipeline.pipeline_validator import WalletPipelineValidator
+from app.trade_reconstruction.trade_reconstruction import TradeReconstructionEngine
 
 logger = get_logger(__name__)
 
@@ -88,10 +89,12 @@ class WalletPipelineManager:
             return False
         self._advance(wallet, PipelineStage.TOKEN_HISTORY_DOWNLOADED)
 
+        await TradeReconstructionEngine(self.session).rebuild_wallet(wallet.id)
+        positions = await self._positions(wallet.id)
         wallet.wallet_type = self.classifier.classify(history)
         self._advance(wallet, PipelineStage.PROFILE_BUILT)
 
-        if not self.validator.has_completed_backtest_data(history, token_history):
+        if not self.validator.has_completed_backtest_data(history, token_history, positions):
             self._stop(wallet, PipelineStatus.INSUFFICIENT_BACKTEST_DATA, "Insufficient completed trades for backtesting")
             return False
         self._advance(wallet, PipelineStage.BACKTEST_COMPLETED)
@@ -163,6 +166,15 @@ class WalletPipelineManager:
             (
                 await self.session.scalars(
                     select(CandidateTokenHistory).where(CandidateTokenHistory.wallet_id == wallet_id)
+                )
+            ).all()
+        )
+
+    async def _positions(self, wallet_id: int) -> list[WalletPosition]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(WalletPosition).where(WalletPosition.candidate_wallet_id == wallet_id)
                 )
             ).all()
         )

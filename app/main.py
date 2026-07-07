@@ -14,6 +14,7 @@ from app.discovery.discovery_api import router as discovery_router
 from app.intelligence.intelligence_api import router as intelligence_router
 from app.jobs.scheduler import build_scheduler
 from app.smart_money.wallet_api import router as solana_wallet_router
+from app.trade_reconstruction.trade_reconstruction_api import router as trade_reconstruction_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -42,3 +43,4 @@ app.include_router(analyst_router)
 app.include_router(solana_wallet_router)
 app.include_router(discovery_router)
 app.include_router(intelligence_router)
+app.include_router(trade_reconstruction_router)
