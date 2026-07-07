@@ -96,6 +96,16 @@ class TelegramAlphaService:
         await self.client.send_message(self.settings.telegram_chat_id, message)
         return True
 
+    async def send_document(self, document_path: str, caption: str) -> bool:
+        if not self.settings.telegram_alerts_enabled:
+            logger.info("alpha_telegram_document_skipped", reason="disabled")
+            return False
+        if not self.client or not self.settings.telegram_chat_id:
+            logger.info("alpha_telegram_document_skipped", reason="missing_token_or_chat_id")
+            return False
+        await self.client.send_document(self.settings.telegram_chat_id, document_path, caption=caption)
+        return True
+
     async def close(self) -> None:
         if self.client:
             await self.client.close()

@@ -69,7 +69,7 @@ class SolanaAlphaDiscoveryEngine:
     async def _evaluate(self, token: TokenLaunch) -> DecisionResult:
         launch_quality = self.launch_quality.score(token)
         developer = self.developer.score(token)
-        smart_money = self.smart_money.score(token)
+        smart_money = await self.smart_money.score_token(self.session, token)
         momentum = self.momentum.score(token)
         risk = self.risk.score(token)
         decision = self.decision.decide(launch_quality, developer, smart_money, momentum, risk)

@@ -5,7 +5,8 @@ from fastapi import APIRouter, Query
 from sqlalchemy import desc, select
 
 from app.alpha_discovery.audit import ALPHA_DISCOVERY_AUDIT
-from app.alpha_discovery.jobs import scan_new_launches
+from app.alpha_discovery.jobs import scan_new_launches, send_alpha_discovery_report, send_alpha_watchlist_digest
+from app.core.config import get_settings
 from app.database.session import SessionFactory
 from app.models import AlphaAlertHistory, AlphaScannedToken, AlphaWatchlistToken
 
@@ -111,3 +112,35 @@ async def list_alpha_alerts(limit: int = Query(25, ge=1, le=200)) -> list[dict[s
 @router.get("/audit")
 async def alpha_discovery_audit() -> dict[str, Any]:
     return ALPHA_DISCOVERY_AUDIT
+
+
+@router.post("/report")
+async def send_alpha_report() -> dict[str, Any]:
+    return await send_alpha_discovery_report()
+
+
+@router.post("/watchlist-digest")
+async def send_watchlist_digest() -> dict[str, int]:
+    return await send_alpha_watchlist_digest()
+
+
+@router.get("/controls")
+async def alpha_controls() -> dict[str, Any]:
+    settings = get_settings()
+    return {
+        "mode": "alert_only",
+        "scan_interval_seconds": settings.alpha_scan_interval_seconds,
+        "report_interval_seconds": settings.alpha_report_interval_seconds,
+        "launch_scan_limit": settings.alpha_launch_scan_limit,
+        "min_liquidity_usd": settings.alpha_min_liquidity_usd,
+        "max_initial_market_cap_usd": settings.alpha_max_initial_market_cap_usd,
+        "min_tx_count": settings.alpha_min_tx_count,
+        "watchlist_min_score": settings.alpha_watchlist_min_score,
+        "min_alert_score": settings.alpha_min_final_alert_score,
+        "smart_wallet_min_count": settings.alpha_smart_wallet_min_count,
+        "smart_wallet_lookback_hours": settings.alpha_smart_wallet_lookback_hours,
+        "telegram_alerts_enabled": settings.telegram_alerts_enabled,
+        "discord_alerts_enabled": settings.discord_alerts_enabled,
+        "debug_alpha_engine": settings.debug_alpha_engine,
+        "safety": ALPHA_DISCOVERY_AUDIT["safety_boundaries"],
+    }

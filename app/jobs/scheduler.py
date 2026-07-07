@@ -1,6 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.alpha_discovery.jobs import scan_new_launches
+from app.alpha_discovery.jobs import scan_new_launches, send_alpha_discovery_report, send_alpha_watchlist_digest
 from app.core.config import Settings
 from app.discovery.discovery_jobs import (
     discover_candidate_wallets,
@@ -43,6 +43,8 @@ def build_scheduler(settings: Settings) -> AsyncIOScheduler:
         (refresh_social, "social", settings.social_refresh_seconds),
         (refresh_news, "news", settings.news_refresh_seconds),
         (scan_new_launches, "alpha_scan_new_launches", settings.alpha_scan_interval_seconds),
+        (send_alpha_watchlist_digest, "alpha_watchlist_digest", settings.alpha_scan_interval_seconds),
+        (send_alpha_discovery_report, "alpha_discovery_report", settings.alpha_report_interval_seconds),
         (analyze_wallets, "wallet_analysis", settings.wallet_analysis_interval_seconds),
         (recalculate_wallet_scores, "wallet_scoring", settings.wallet_scoring_interval_seconds),
         (discover_candidate_wallets, "candidate_wallet_discovery", settings.candidate_discovery_interval_seconds),

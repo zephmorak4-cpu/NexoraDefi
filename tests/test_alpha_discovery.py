@@ -1,17 +1,21 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from decimal import Decimal
+from zipfile import ZipFile
 
 import httpx
 from sqlalchemy import select
 
 from app.alpha_discovery import api as alpha_api
-from app.alpha_discovery.agents import DecisionAgent, LaunchQualityAgent, RiskAgent
+from app.alpha_discovery.agents import DecisionAgent, LaunchQualityAgent, RiskAgent, SmartMoneyAgent
 from app.alpha_discovery.engine import SolanaAlphaDiscoveryEngine
 from app.alpha_discovery.format_alert import format_alpha_alert
+from app.alpha_discovery.report import AlphaDiscoveryReportExporter, build_watchlist_digest
 from app.alpha_discovery.services import MarketDataService
 from app.alpha_discovery.types import AgentScore, RiskScore, SmartMoneyScore, TokenLaunch, TokenTxns
 from app.core.config import Settings
 from app.main import app
-from app.models import AlphaAlertHistory, AlphaScannedToken
+from app.models import AlphaAlertHistory, AlphaScannedToken, AlphaWatchlistToken, CandidateHistory, CandidateWallet, TrackedWallet, WalletActivity
 
 
 def _launch(**overrides):
@@ -74,7 +78,7 @@ class FixedAgent:
 
 
 class FixedSmartMoneyAgent:
-    def score(self, token):
+    async def score_token(self, session, token):
         return SmartMoneyScore(100, True, ["4 smart wallets accumulated early"], 4)
 
 
@@ -111,6 +115,53 @@ def test_decision_agent_only_alerts_for_high_confidence_alpha():
     assert decision.decision == "ALPHA_ALERT"
     assert decision.should_alert is True
     assert decision.final_score >= 90
+
+
+async def test_smart_money_agent_uses_tracked_and_candidate_wallet_activity(db_session):
+    tracked = TrackedWallet(
+        wallet_address="tracked-alpha-wallet",
+        chain="solana",
+        status="active",
+        reputation_score=Decimal("95"),
+    )
+    candidate = CandidateWallet(
+        wallet_address="candidate-alpha-wallet",
+        chain="solana",
+        discovery_reason="test",
+        status="observing",
+        candidate_score=Decimal("95"),
+        reputation_score=Decimal("95"),
+    )
+    db_session.add_all([tracked, candidate])
+    await db_session.flush()
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            WalletActivity(
+                wallet_id=tracked.id,
+                token_address="AlphaToken1111111111111111111111111111111111",
+                transaction_signature="tracked-buy",
+                transaction_type="buy",
+                amount=Decimal("1"),
+                timestamp=now,
+            ),
+            CandidateHistory(
+                wallet_id=candidate.id,
+                signature="candidate-buy",
+                token="AlphaToken1111111111111111111111111111111111",
+                action="buy",
+                amount=Decimal("1"),
+                timestamp=now,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    score = await SmartMoneyAgent(Settings(alpha_smart_wallet_min_count=2)).score_token(db_session, _launch())
+
+    assert score.smart_wallets_detected == 2
+    assert score.score == 100
+    assert "smart wallets accumulated" in score.reasons[0]
 
 
 async def test_engine_persists_scan_and_sends_alert_without_trade_execution(db_session):
@@ -201,3 +252,62 @@ async def test_alpha_admin_api_returns_plain_english_token_breakdown(db_session,
     assert payload["token"]["pair_address"] == "ApiPair"
     assert payload["assessment"]["decision"] == "ALPHA_ALERT"
     assert audit.json()["mode"] == "alert_only"
+
+
+async def test_alpha_report_exporter_creates_word_and_pdf_profiles(db_session, tmp_path):
+    db_session.add(
+        AlphaScannedToken(
+            token_address="ReportToken",
+            pair_address="ReportPair",
+            symbol="RPT",
+            name="Report Token",
+            source="test",
+            liquidity_usd=Decimal("12000"),
+            market_cap_usd=Decimal("90000"),
+            volume_usd=Decimal("34000"),
+            buys=40,
+            sells=10,
+            final_score=Decimal("84"),
+            decision="WATCH_CLOSELY",
+            should_alert=False,
+            rejection_reasons=["smart wallet signal below threshold"],
+            agent_scores={"launch_quality": 100, "smart_money": 70},
+        )
+    )
+    db_session.add(
+        AlphaWatchlistToken(
+            token_address="ReportToken",
+            decision="WATCH_CLOSELY",
+            final_score=Decimal("84"),
+            reasons=["smart wallet signal below threshold"],
+        )
+    )
+    await db_session.commit()
+
+    export = await AlphaDiscoveryReportExporter().export(db_session, tmp_path, limit=10)
+
+    assert export["summary"]["tokens_reviewed"] == 1
+    assert (tmp_path / "Solana Alpha Discovery Report.docx").exists()
+    assert (tmp_path / "Solana Alpha Discovery Report.pdf").exists()
+    with ZipFile(tmp_path / "Solana Alpha Discovery Report.docx") as archive:
+        document_xml = archive.read("word/document.xml").decode()
+    assert "Token Address: ReportToken" in document_xml
+    assert "Pair Address: ReportPair" in document_xml
+    assert "Manual" in document_xml or "manual" in document_xml
+
+
+def test_watchlist_digest_is_plain_english():
+    digest = build_watchlist_digest(
+        [
+            AlphaWatchlistToken(
+                token_address="WatchToken",
+                decision="WATCH_CLOSELY",
+                final_score=Decimal("82"),
+                reasons=["strong momentum", "smart wallet signal below threshold"],
+            )
+        ]
+    )
+
+    assert "monitor-only tokens" in digest
+    assert "Token Address:" in digest
+    assert "buy instructions" in digest

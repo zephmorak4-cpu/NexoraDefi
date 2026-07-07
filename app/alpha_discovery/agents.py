@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import distinct, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.alpha_discovery.types import AgentScore, DecisionResult, RiskScore, SmartMoneyScore, TokenLaunch
 from app.core.config import Settings
+from app.models import CandidateHistory, CandidateWallet, TrackedWallet, WalletActivity
 
 
 class LaunchDetectorAgent:
@@ -65,6 +71,57 @@ class SmartMoneyAgent:
             score += 20
             reasons = ["3+ smart wallets detected early"]
         return SmartMoneyScore(score=min(score, 100), passed=score >= 50, reasons=reasons, smart_wallets_detected=detected)
+
+    async def score_token(self, session: AsyncSession, token: TokenLaunch) -> SmartMoneyScore:
+        since = datetime.now(timezone.utc) - timedelta(hours=self.settings.alpha_smart_wallet_lookback_hours)
+        tracked_count = await session.scalar(
+            select(func.count(distinct(TrackedWallet.wallet_address)))
+            .join(WalletActivity, WalletActivity.wallet_id == TrackedWallet.id)
+            .where(
+                TrackedWallet.chain == "solana",
+                TrackedWallet.status == "active",
+                TrackedWallet.reputation_score >= self.settings.candidate_promotion_reputation,
+                WalletActivity.token_address == token.token_address,
+                WalletActivity.timestamp >= since,
+                WalletActivity.transaction_type.in_(("buy", "swap", "accumulate")),
+            )
+        )
+        candidate_count = await session.scalar(
+            select(func.count(distinct(CandidateWallet.wallet_address)))
+            .join(CandidateHistory, CandidateHistory.wallet_id == CandidateWallet.id)
+            .where(
+                CandidateWallet.chain == "solana",
+                CandidateWallet.candidate_score >= self.settings.candidate_promotion_score,
+                CandidateWallet.reputation_score >= self.settings.candidate_promotion_reputation,
+                CandidateHistory.token == token.token_address,
+                CandidateHistory.timestamp >= since,
+                CandidateHistory.action.in_(("buy", "swap", "accumulate")),
+            )
+        )
+        configured_hits = 0
+        if token.creator_wallet and token.creator_wallet in self.smart_wallets:
+            configured_hits = 1
+        detected = int(tracked_count or 0) + int(candidate_count or 0) + configured_hits
+        if detected >= self.settings.alpha_smart_wallet_min_count:
+            return SmartMoneyScore(
+                100,
+                True,
+                [f"{detected} smart wallets accumulated this token inside {self.settings.alpha_smart_wallet_lookback_hours}h"],
+                detected,
+            )
+        if detected > 0:
+            return SmartMoneyScore(
+                70,
+                True,
+                [f"{detected} smart wallet signal(s) found; below alpha confirmation threshold"],
+                detected,
+            )
+        return SmartMoneyScore(
+            50,
+            True,
+            ["no smart wallet accumulation detected yet"],
+            0,
+        )
 
 
 class MomentumAgent:
@@ -139,7 +196,7 @@ class DecisionAgent:
         )
         if final >= 90:
             decision = "ALPHA_ALERT"
-        elif final >= 80:
+        elif final >= self.settings.alpha_watchlist_min_score:
             decision = "WATCH_CLOSELY"
         elif final >= 70:
             decision = "MONITOR_ONLY"

@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     alpha_max_creator_hold_percent: float = 10
     alpha_max_top10_holder_percent: float = 45
     alpha_smart_wallet_min_count: int = 3
+    alpha_smart_wallet_lookback_hours: int = 48
+    alpha_watchlist_min_score: float = 80
+    alpha_report_interval_seconds: int = 21600
+    alpha_report_token_limit: int = 100
     debug_alpha_engine: bool = False
     telegram_alerts_enabled: bool = True
     discord_alerts_enabled: bool = False
@@ -247,6 +251,9 @@ class Settings(BaseSettings):
         "alpha_scan_interval_seconds",
         "alpha_min_tx_count",
         "alpha_smart_wallet_min_count",
+        "alpha_smart_wallet_lookback_hours",
+        "alpha_report_interval_seconds",
+        "alpha_report_token_limit",
         "alpha_launch_scan_limit",
         "wallet_analysis_interval_seconds",
         "wallet_scoring_interval_seconds",
@@ -319,6 +326,7 @@ class Settings(BaseSettings):
             self.alpha_min_final_alert_score,
             self.alpha_max_creator_hold_percent,
             self.alpha_max_top10_holder_percent,
+            self.alpha_watchlist_min_score,
         )
         if not all(0 <= value <= 100 for value in bounded):
             raise ValueError("Alpha discovery percentage thresholds must be within 0-100")
