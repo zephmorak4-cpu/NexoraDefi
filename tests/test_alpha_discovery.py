@@ -8,7 +8,8 @@ import httpx
 from sqlalchemy import select
 
 from app.alpha_discovery import api as alpha_api
-from app.alpha_discovery.agents import DecisionAgent, LaunchDetectorAgent, LaunchQualityAgent, RiskAgent, SmartMoneyAgent
+from app.alpha_discovery import jobs as alpha_jobs
+from app.alpha_discovery.agents import DecisionAgent, DeveloperReputationAgent, LaunchDetectorAgent, LaunchQualityAgent, RiskAgent, SmartMoneyAgent
 from app.alpha_discovery.birdeye_provider import BirdeyeService
 from app.alpha_discovery.dexscreener_provider import DexScreenerService
 from app.alpha_discovery.engine import SolanaAlphaDiscoveryEngine
@@ -63,6 +64,11 @@ class FakeTelegram:
 
     async def close(self):
         return None
+
+
+class FakeDigestTelegram(FakeTelegram):
+    async def send_document(self, document_path, caption):
+        return True
 
 
 class FakeDexClient:
@@ -123,6 +129,17 @@ def test_decision_agent_only_alerts_for_high_confidence_alpha():
     assert decision.final_score >= 90
 
 
+def test_unknown_creator_is_not_neutral():
+    missing = DeveloperReputationAgent().score(_launch(creator_wallet=None))
+    unknown = DeveloperReputationAgent().score(_launch(creator_wallet="CreatorWallet"))
+
+    assert missing.score == 25
+    assert missing.passed is False
+    assert "creator wallet unavailable" in missing.reasons[0]
+    assert unknown.score == 35
+    assert "cautious unknown score" in unknown.reasons[0]
+
+
 async def test_smart_money_agent_uses_tracked_and_candidate_wallet_activity(db_session):
     tracked = TrackedWallet(
         wallet_address="tracked-alpha-wallet",
@@ -166,8 +183,48 @@ async def test_smart_money_agent_uses_tracked_and_candidate_wallet_activity(db_s
     score = await SmartMoneyAgent(Settings(alpha_smart_wallet_min_count=2)).score_token(db_session, _launch())
 
     assert score.smart_wallets_detected == 2
-    assert score.score == 100
-    assert "smart wallets accumulated" in score.reasons[0]
+    assert score.score == 60
+    assert "moderate confirmation" in score.reasons[0]
+
+
+async def test_smart_money_agent_penalizes_no_accumulation(db_session):
+    score = await SmartMoneyAgent(Settings()).score_token(db_session, _launch())
+
+    assert score.score == 30
+    assert score.passed is False
+    assert "no smart wallet accumulation detected" in score.reasons
+
+
+def test_low_liquidity_forces_ignore_and_caps_score():
+    decision = DecisionAgent(Settings(alpha_min_liquidity_usd=5_000)).decide(
+        AgentScore(100, True, ["launch quality passed"]),
+        AgentScore(35, True, ["creator reputation data incomplete; cautious unknown score applied"]),
+        SmartMoneyScore(30, False, ["no smart wallet accumulation detected"], 0),
+        AgentScore(100, True, ["strong momentum"]),
+        RiskScore(80, True, ["Top holder data unavailable"], "LOW"),
+        _launch(liquidity_usd=499),
+    )
+
+    assert decision.decision == "IGNORE"
+    assert decision.final_score <= 59
+    assert decision.should_alert is False
+    assert "liquidity below minimum; token rejected" in decision.caps_applied
+
+
+def test_missing_smart_money_and_creator_caps_prevent_watchlist():
+    decision = DecisionAgent(Settings()).decide(
+        AgentScore(100, True, ["launch quality passed"]),
+        AgentScore(25, False, ["creator wallet unavailable; high uncertainty"]),
+        SmartMoneyScore(20, False, ["smart wallet transaction stream unavailable; confidence capped"], 0),
+        AgentScore(100, True, ["strong momentum"]),
+        RiskScore(77, True, ["Top holder data unavailable"], "MEDIUM"),
+        _launch(),
+    )
+
+    assert decision.final_score <= 64
+    assert decision.decision == "IGNORE"
+    assert "smart wallet stream unavailable capped score at 69" in decision.caps_applied
+    assert "creator wallet missing capped score at 64" in decision.caps_applied
 
 
 async def test_engine_persists_scan_and_sends_alert_without_trade_execution(db_session):
@@ -336,9 +393,45 @@ def test_watchlist_digest_is_plain_english():
         ]
     )
 
-    assert "monitor-only tokens" in digest
-    assert "Token Address:" in digest
+    assert "watchlist tokens" in digest
+    assert "Address:" in digest
+    assert "`WatchToken`" not in digest
+    assert "Main issue:" in digest
+    assert "Why:" in digest
     assert "buy instructions" in digest
+
+
+async def test_watchlist_digest_excludes_monitor_only_by_default(db_session, monkeypatch):
+    db_session.add_all(
+        [
+            AlphaWatchlistToken(
+                token_address="WatchToken",
+                decision="WATCH_CLOSELY",
+                final_score=Decimal("84"),
+                reasons=["2 smart wallets detected; moderate confirmation"],
+            ),
+            AlphaWatchlistToken(
+                token_address="MonitorToken",
+                decision="MONITOR_ONLY",
+                final_score=Decimal("74"),
+                reasons=["no smart wallet accumulation detected"],
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def fake_session_factory():
+        yield db_session
+
+    telegram = FakeDigestTelegram()
+    monkeypatch.setattr(alpha_jobs, "SessionFactory", fake_session_factory)
+    monkeypatch.setattr(alpha_jobs, "TelegramAlphaService", lambda settings: telegram)
+    result = await alpha_jobs.send_alpha_watchlist_digest()
+
+    assert result == {"watchlist": 1, "sent": 1}
+    assert "WatchToken" in telegram.messages[0]
+    assert "MonitorToken" not in telegram.messages[0]
 
 
 class FakeProviderClient:

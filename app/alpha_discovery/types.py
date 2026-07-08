@@ -84,3 +84,5 @@ class DecisionResult:
     should_alert: bool
     summary: str
     reasons: list[str]
+    raw_score: float | None = None
+    caps_applied: list[str] = field(default_factory=list)

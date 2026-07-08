@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     alpha_report_token_limit: int = 100
     debug_alpha_engine: bool = False
     telegram_alerts_enabled: bool = True
+    send_monitor_only_digest: bool = False
+    send_watchlist_digest: bool = True
+    max_digest_tokens: int = 5
     discord_alerts_enabled: bool = False
     alpha_launch_scan_limit: int = 50
     alpha_smart_wallets: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -275,6 +278,7 @@ class Settings(BaseSettings):
         "provider_timeout_ms",
         "provider_retry_count",
         "new_pair_lookback_minutes",
+        "max_digest_tokens",
         "alpha_launch_scan_limit",
         "wallet_analysis_interval_seconds",
         "wallet_scoring_interval_seconds",

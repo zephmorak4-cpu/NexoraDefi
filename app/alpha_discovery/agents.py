@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alpha_discovery.types import AgentScore, DecisionResult, RiskScore, SmartMoneyScore, TokenLaunch
 from app.core.config import Settings
 from app.models import AlphaScannedToken, CandidateHistory, CandidateWallet, TrackedWallet, WalletActivity
+from app.services.smart_money import aware
 
 
 class LaunchDetectorAgent:
@@ -76,8 +77,8 @@ class LaunchQualityAgent:
 class DeveloperReputationAgent:
     def score(self, token: TokenLaunch) -> AgentScore:
         if not token.creator_wallet:
-            return AgentScore(50, True, ["creator reputation data incomplete; neutral score applied"])
-        return AgentScore(50, True, ["creator wallet present; no adverse history available"])
+            return AgentScore(25, False, ["creator wallet unavailable; high uncertainty"])
+        return AgentScore(35, True, ["creator reputation data incomplete; cautious unknown score applied"])
 
 
 class SmartMoneyAgent:
@@ -86,62 +87,93 @@ class SmartMoneyAgent:
         self.smart_wallets = smart_wallets or settings.alpha_smart_wallets
 
     def score(self, token: TokenLaunch) -> SmartMoneyScore:
-        detected = 0
-        reasons = ["smart wallet transaction stream unavailable; no detected accumulation"]
-        score = 50.0
-        if detected >= self.settings.alpha_smart_wallet_min_count:
-            score += 20
-            reasons = ["3+ smart wallets detected early"]
-        return SmartMoneyScore(score=min(score, 100), passed=score >= 50, reasons=reasons, smart_wallets_detected=detected)
+        return SmartMoneyScore(
+            20,
+            False,
+            ["smart wallet transaction stream unavailable; confidence capped"],
+            0,
+        )
 
     async def score_token(self, session: AsyncSession, token: TokenLaunch) -> SmartMoneyScore:
         since = datetime.now(timezone.utc) - timedelta(hours=self.settings.alpha_smart_wallet_lookback_hours)
-        tracked_count = await session.scalar(
-            select(func.count(distinct(TrackedWallet.wallet_address)))
-            .join(WalletActivity, WalletActivity.wallet_id == TrackedWallet.id)
-            .where(
-                TrackedWallet.chain == "solana",
-                TrackedWallet.status == "active",
-                TrackedWallet.reputation_score >= self.settings.candidate_promotion_reputation,
-                WalletActivity.token_address == token.token_address,
-                WalletActivity.timestamp >= since,
-                WalletActivity.transaction_type.in_(("buy", "swap", "accumulate")),
+        try:
+            tracked_rows = (
+                await session.execute(
+                    select(distinct(TrackedWallet.wallet_address), WalletActivity.timestamp)
+                    .join(WalletActivity, WalletActivity.wallet_id == TrackedWallet.id)
+                    .where(
+                        TrackedWallet.chain == "solana",
+                        TrackedWallet.status == "active",
+                        TrackedWallet.reputation_score >= self.settings.candidate_promotion_reputation,
+                        WalletActivity.token_address == token.token_address,
+                        WalletActivity.timestamp >= since,
+                        WalletActivity.transaction_type.in_(("buy", "swap", "accumulate")),
+                    )
+                )
+            ).all()
+            candidate_rows = (
+                await session.execute(
+                    select(distinct(CandidateWallet.wallet_address), CandidateHistory.timestamp)
+                    .join(CandidateHistory, CandidateHistory.wallet_id == CandidateWallet.id)
+                    .where(
+                        CandidateWallet.chain == "solana",
+                        CandidateWallet.candidate_score >= self.settings.candidate_promotion_score,
+                        CandidateWallet.reputation_score >= self.settings.candidate_promotion_reputation,
+                        CandidateHistory.token == token.token_address,
+                        CandidateHistory.timestamp >= since,
+                        CandidateHistory.action.in_(("buy", "swap", "accumulate")),
+                    )
+                )
+            ).all()
+        except Exception:
+            return SmartMoneyScore(
+                20,
+                False,
+                ["smart wallet transaction stream unavailable; confidence capped"],
+                0,
             )
-        )
-        candidate_count = await session.scalar(
-            select(func.count(distinct(CandidateWallet.wallet_address)))
-            .join(CandidateHistory, CandidateHistory.wallet_id == CandidateWallet.id)
-            .where(
-                CandidateWallet.chain == "solana",
-                CandidateWallet.candidate_score >= self.settings.candidate_promotion_score,
-                CandidateWallet.reputation_score >= self.settings.candidate_promotion_reputation,
-                CandidateHistory.token == token.token_address,
-                CandidateHistory.timestamp >= since,
-                CandidateHistory.action.in_(("buy", "swap", "accumulate")),
-            )
-        )
         configured_hits = 0
         if token.creator_wallet and token.creator_wallet in self.smart_wallets:
             configured_hits = 1
-        detected = int(tracked_count or 0) + int(candidate_count or 0) + configured_hits
-        if detected >= self.settings.alpha_smart_wallet_min_count:
+        detected_wallets = {row[0] for row in tracked_rows + candidate_rows if row[0]}
+        detected = len(detected_wallets) + configured_hits
+        timestamps = [aware(row[1]) for row in tracked_rows + candidate_rows if row[1]]
+        within_15 = False
+        if len(timestamps) >= 3:
+            ordered = sorted(timestamps)
+            within_15 = (ordered[-1] - ordered[0]).total_seconds() <= 900
+        if detected >= 3 and within_15:
             return SmartMoneyScore(
-                100,
+                85,
                 True,
-                [f"{detected} smart wallets accumulated this token inside {self.settings.alpha_smart_wallet_lookback_hours}h"],
+                ["3+ smart wallets detected within 15 minutes"],
                 detected,
             )
-        if detected > 0:
+        if detected >= 3:
             return SmartMoneyScore(
-                70,
+                75,
                 True,
-                [f"{detected} smart wallet signal(s) found; below alpha confirmation threshold"],
+                [f"{detected} smart wallets detected; confirmation spread beyond 15 minutes"],
+                detected,
+            )
+        if detected == 2:
+            return SmartMoneyScore(
+                60,
+                True,
+                ["2 smart wallets detected; moderate confirmation"],
+                detected,
+            )
+        if detected == 1:
+            return SmartMoneyScore(
+                45,
+                False,
+                ["only 1 smart wallet detected; insufficient confirmation"],
                 detected,
             )
         return SmartMoneyScore(
-            50,
-            True,
-            ["no smart wallet accumulation detected yet"],
+            30,
+            False,
+            ["no smart wallet accumulation detected"],
             0,
         )
 
@@ -229,22 +261,54 @@ class DecisionAgent:
         smart_money: SmartMoneyScore,
         momentum: AgentScore,
         risk: RiskScore,
+        token: TokenLaunch | None = None,
     ) -> DecisionResult:
-        final = (
+        raw = (
             launch_quality.score * 0.15
             + developer.score * 0.15
             + smart_money.score * 0.25
             + momentum.score * 0.25
             + risk.score * 0.20
         )
-        if final >= 90:
+        final = raw
+        reasons = launch_quality.reasons + developer.reasons + smart_money.reasons + momentum.reasons + risk.reasons
+        caps: list[str] = []
+        forced_ignore = False
+        if token is not None and (token.liquidity_usd or 0) < self.settings.alpha_min_liquidity_usd:
+            final = min(final, 59)
+            forced_ignore = True
+            caps.append("liquidity below minimum; token rejected")
+        if risk.risk_level == "EXTREME":
+            final = min(final, 49)
+            forced_ignore = True
+            caps.append("extreme risk capped score at 49")
+        elif risk.risk_level == "HIGH":
+            final = min(final, 69)
+            caps.append("high risk capped score at 69")
+        if any("transaction stream unavailable" in reason for reason in smart_money.reasons):
+            final = min(final, 69)
+            caps.append("smart wallet stream unavailable capped score at 69")
+        if any("no smart wallet accumulation detected" in reason for reason in smart_money.reasons):
+            final = min(final, 74)
+            caps.append("no smart money accumulation capped score at 74")
+        if any("creator wallet unavailable" in reason for reason in developer.reasons):
+            final = min(final, 64)
+            caps.append("creator wallet missing capped score at 64")
+        if any("cautious unknown score" in reason for reason in developer.reasons):
+            final = min(final, 79)
+            caps.append("creator reputation unknown capped score at 79")
+        if any("Top holder data unavailable" in reason for reason in risk.reasons):
+            final = min(final, 79)
+            caps.append("holder distribution unavailable capped score at 79")
+        if forced_ignore:
+            decision = "IGNORE"
+        elif final >= 90:
             decision = "ALPHA_ALERT"
-        elif final >= self.settings.alpha_watchlist_min_score:
+        elif final >= 82:
             decision = "WATCH_CLOSELY"
         elif final >= 70:
             decision = "MONITOR_ONLY"
         else:
             decision = "IGNORE"
-        reasons = launch_quality.reasons + developer.reasons + smart_money.reasons + momentum.reasons + risk.reasons
         should_alert = decision == "ALPHA_ALERT" and final >= self.settings.alpha_min_final_alert_score
-        return DecisionResult(round(final, 2), decision, should_alert, f"{decision} at {final:.2f}/100", reasons)
+        return DecisionResult(round(final, 2), decision, should_alert, f"{decision} at {final:.2f}/100", reasons + caps, round(raw, 2), caps)

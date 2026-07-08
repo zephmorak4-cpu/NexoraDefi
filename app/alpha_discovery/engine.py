@@ -75,16 +75,18 @@ class SolanaAlphaDiscoveryEngine:
         smart_money = await self.smart_money.score_token(self.session, token)
         momentum = self.momentum.score(token)
         risk = self.risk.score(token)
-        decision = self.decision.decide(launch_quality, developer, smart_money, momentum, risk)
+        decision = self.decision.decide(launch_quality, developer, smart_money, momentum, risk, token)
         if self.settings.debug_alpha_engine:
             logger.info(
-                "alpha_debug_scores",
+                "alpha_debug_score_breakdown",
                 token=token.token_address,
                 launch_quality=launch_quality.score,
                 developer=developer.score,
                 smart_money=smart_money.score,
                 momentum=momentum.score,
                 risk=risk.score,
+                raw_weighted_score=decision.raw_score,
+                caps_applied=decision.caps_applied,
                 final=decision.final_score,
                 decision=decision.decision,
             )

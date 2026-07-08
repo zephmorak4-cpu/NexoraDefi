@@ -43,14 +43,23 @@ async def send_alpha_discovery_report() -> dict[str, object]:
 
 async def send_alpha_watchlist_digest() -> dict[str, int]:
     settings = get_settings()
+    if not settings.send_watchlist_digest and not settings.send_monitor_only_digest:
+        logger.info("alpha_watchlist_digest_skipped", reason="digest_disabled")
+        return {"watchlist": 0, "sent": 0}
     telegram = TelegramAlphaService(settings)
+    decisions = []
+    if settings.send_watchlist_digest:
+        decisions.append("WATCH_CLOSELY")
+    if settings.send_monitor_only_digest:
+        decisions.append("MONITOR_ONLY")
     async with SessionFactory() as session:
         watchlist = list(
             (
                 await session.scalars(
                     select(AlphaWatchlistToken)
+                    .where(AlphaWatchlistToken.decision.in_(decisions))
                     .order_by(desc(AlphaWatchlistToken.final_score), desc(AlphaWatchlistToken.created_at))
-                    .limit(10)
+                    .limit(settings.max_digest_tokens)
                 )
             ).all()
         )

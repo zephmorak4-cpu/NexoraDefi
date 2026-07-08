@@ -235,14 +235,21 @@ def build_alpha_report_message(export: dict[str, Any]) -> str:
 
 
 def build_watchlist_digest(watchlist: list[AlphaWatchlistToken]) -> str:
-    lines = ["*Solana Alpha Watchlist Digest*", "", "These are monitor-only tokens, not buy instructions."]
+    lines = ["*Solana Alpha Watchlist Digest*", "", "These are watchlist tokens, not buy instructions."]
     if not watchlist:
         lines.append("No watchlist tokens currently meet the configured threshold.")
         return "\n".join(lines)
-    for index, row in enumerate(watchlist[:10], start=1):
+    for index, row in enumerate(watchlist, start=1):
+        main_issue = next(
+            (reason for reason in row.reasons if "smart" in reason.lower() or "liquidity" in reason.lower()),
+            row.reasons[0] if row.reasons else "No issue recorded",
+        )
         lines.append("")
-        lines.append(f"{index}. Token Address: `{row.token_address}`")
+        lines.append(f"{index}. Token: UNKNOWN")
+        lines.append(f"Address: {row.token_address}")
         lines.append(f"Score: {float(row.final_score):.2f}/100")
         lines.append(f"Decision: {row.decision}")
-        lines.append(f"Why: {'; '.join(row.reasons[:3])}")
+        lines.append(f"Main issue: {main_issue}")
+        lines.append("Why:")
+        lines.extend(f"- {reason}" for reason in row.reasons[:5])
     return "\n".join(lines)
