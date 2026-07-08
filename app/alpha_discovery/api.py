@@ -2,13 +2,13 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Query
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.alpha_discovery.audit import ALPHA_DISCOVERY_AUDIT
 from app.alpha_discovery.jobs import scan_new_launches, send_alpha_discovery_report, send_alpha_watchlist_digest
 from app.core.config import get_settings
 from app.database.session import SessionFactory
-from app.models import AlphaAlertHistory, AlphaScannedToken, AlphaWatchlistToken
+from app.models import AlphaAlertHistory, AlphaProviderSnapshot, AlphaScannedToken, AlphaWatchlistToken
 
 router = APIRouter(prefix="/admin/alpha", tags=["alpha-discovery"])
 
@@ -50,6 +50,17 @@ def _scanned_token_payload(row: AlphaScannedToken) -> dict[str, Any]:
             "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
         },
     }
+
+
+def _reason_summary(reason_rows: list[list[str] | None], limit: int = 12) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for reasons in reason_rows:
+        for reason in reasons or []:
+            counts[reason] = counts.get(reason, 0) + 1
+    return [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
+    ]
 
 
 @router.post("/scan")
@@ -107,6 +118,90 @@ async def list_alpha_alerts(limit: int = Query(25, ge=1, le=200)) -> list[dict[s
         }
         for row in rows
     ]
+
+
+@router.get("/diagnostics")
+async def alpha_diagnostics() -> dict[str, Any]:
+    settings = get_settings()
+    async with SessionFactory() as session:
+        total_scanned = await session.scalar(select(func.count()).select_from(AlphaScannedToken))
+        latest_seen = await session.scalar(select(func.max(AlphaScannedToken.last_seen_at)))
+        decisions = (
+            await session.execute(
+                select(AlphaScannedToken.decision, func.count())
+                .group_by(AlphaScannedToken.decision)
+                .order_by(desc(func.count()))
+            )
+        ).all()
+        watchlist_decisions = (
+            await session.execute(
+                select(AlphaWatchlistToken.decision, func.count())
+                .group_by(AlphaWatchlistToken.decision)
+                .order_by(desc(func.count()))
+            )
+        ).all()
+        alerts_total = await session.scalar(select(func.count()).select_from(AlphaAlertHistory))
+        provider_rows = (
+            await session.execute(
+                select(
+                    AlphaProviderSnapshot.provider,
+                    func.count(),
+                    func.max(AlphaProviderSnapshot.created_at),
+                )
+                .group_by(AlphaProviderSnapshot.provider)
+                .order_by(desc(func.count()))
+            )
+        ).all()
+        reason_rows = (await session.scalars(select(AlphaScannedToken.rejection_reasons))).all()
+
+    return {
+        "status": "active" if total_scanned else "no_scans_recorded",
+        "plain_english": {
+            "pipeline": "Alpha discovery has analyzed tokens." if total_scanned else "No analyzed token rows exist yet.",
+            "signals": (
+                "No alpha alerts have qualified yet; analyzed tokens are being rejected or monitored by score/risk rules."
+                if not alerts_total
+                else "At least one alpha alert has qualified."
+            ),
+            "dedupe": (
+                "A manual scan can return scanned=0 when the latest provider launches were already scanned inside the "
+                f"{settings.new_pair_lookback_minutes}-minute dedupe window."
+            ),
+        },
+        "scheduler": {
+            "scan_interval_seconds": settings.alpha_scan_interval_seconds,
+            "new_pair_lookback_minutes": settings.new_pair_lookback_minutes,
+            "launch_scan_limit": settings.alpha_launch_scan_limit,
+        },
+        "thresholds": {
+            "min_liquidity_usd": settings.alpha_min_liquidity_usd,
+            "min_tx_count": settings.alpha_min_tx_count,
+            "watchlist_min_score": settings.alpha_watchlist_min_score,
+            "min_alert_score": settings.alpha_min_final_alert_score,
+            "smart_wallet_min_count": settings.alpha_smart_wallet_min_count,
+        },
+        "telegram_noise_control": {
+            "send_monitor_only_digest": settings.send_monitor_only_digest,
+            "send_watchlist_digest": settings.send_watchlist_digest,
+            "max_digest_tokens": settings.max_digest_tokens,
+        },
+        "counts": {
+            "analyzed_tokens": total_scanned or 0,
+            "alerts": alerts_total or 0,
+            "decisions": {decision or "UNKNOWN": count for decision, count in decisions},
+            "watchlist": {decision or "UNKNOWN": count for decision, count in watchlist_decisions},
+        },
+        "latest_seen_at": latest_seen.isoformat() if latest_seen else None,
+        "top_rejection_reasons": _reason_summary(reason_rows),
+        "provider_snapshots": [
+            {
+                "provider": provider,
+                "snapshots": count,
+                "latest_snapshot_at": latest.isoformat() if latest else None,
+            }
+            for provider, count, latest in provider_rows
+        ],
+    }
 
 
 @router.get("/audit")

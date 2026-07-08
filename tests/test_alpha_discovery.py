@@ -339,6 +339,58 @@ async def test_alpha_admin_api_returns_plain_english_token_breakdown(db_session,
     assert audit.json()["mode"] == "alert_only"
 
 
+async def test_alpha_diagnostics_explains_live_scan_state(db_session, monkeypatch):
+    db_session.add(
+        AlphaScannedToken(
+            token_address="RejectedToken",
+            pair_address="RejectedPair",
+            symbol="REJ",
+            name="Rejected Token",
+            source="test",
+            final_score=55,
+            decision="IGNORE",
+            should_alert=False,
+            rejection_reasons=["liquidity too low", "no smart wallet accumulation detected"],
+            agent_scores={"smart_money": 30},
+        )
+    )
+    db_session.add(
+        AlphaWatchlistToken(
+            token_address="MonitorToken",
+            decision="MONITOR_ONLY",
+            final_score=Decimal("70.3"),
+            reasons=["launch quality passed"],
+        )
+    )
+    db_session.add(
+        AlphaProviderSnapshot(
+            token_address="RejectedToken",
+            pair_address="RejectedPair",
+            provider="DEXSCREENER",
+            raw_response_json={"ok": True},
+            normalized_data_json={"token_address": "RejectedToken"},
+        )
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def fake_session_factory():
+        yield db_session
+
+    monkeypatch.setattr(alpha_api, "SessionFactory", fake_session_factory)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/admin/alpha/diagnostics")
+
+    payload = response.json()
+    assert payload["status"] == "active"
+    assert payload["counts"]["analyzed_tokens"] == 1
+    assert payload["counts"]["decisions"]["IGNORE"] == 1
+    assert payload["counts"]["watchlist"]["MONITOR_ONLY"] == 1
+    assert payload["top_rejection_reasons"][0] == {"reason": "liquidity too low", "count": 1}
+    assert payload["provider_snapshots"][0]["provider"] == "DEXSCREENER"
+    assert "dedupe window" in payload["plain_english"]["dedupe"]
+
+
 async def test_alpha_report_exporter_creates_word_and_pdf_profiles(db_session, tmp_path):
     db_session.add(
         AlphaScannedToken(
