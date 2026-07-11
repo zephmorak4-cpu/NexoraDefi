@@ -46,8 +46,8 @@ class BirdeyeService:
 
     async def enrich(self, token_address: str) -> dict[str, Any]:
         overview = await self.get_token_overview(token_address)
-        holders = await self.get_holder_distribution(token_address)
-        security = await self.get_token_security(token_address)
+        holders = await self._optional_call("holders", self.get_holder_distribution, token_address)
+        security = await self._optional_call("security", self.get_token_security, token_address)
         holder_items = []
         if isinstance(holders, dict):
             holder_items = holders.get("items") or holders.get("holders") or []
@@ -69,6 +69,13 @@ class BirdeyeService:
         normalized["_source"] = "Birdeye"
         normalized["_snapshot"] = ProviderSnapshot(self.provider, {"overview": overview, "holders": holders, "security": security}, normalized.copy())
         return normalized
+
+    async def _optional_call(self, label: str, call, token_address: str) -> dict[str, Any] | None:
+        try:
+            return await call(token_address)
+        except Exception as exc:
+            logger.warning("alpha_birdeye_partial_enrichment_failed", endpoint=label, error=type(exc).__name__)
+            return None
 
     async def close(self) -> None:
         await self.client.close()

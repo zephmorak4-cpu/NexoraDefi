@@ -537,6 +537,36 @@ async def test_birdeye_missing_api_key_fallback_does_not_crash():
     assert data["holder_count"] is None
 
 
+async def test_birdeye_partial_rate_limit_keeps_overview_snapshot():
+    client = FakeProviderClient(
+        {
+            "/defi/token_overview": {
+                "success": True,
+                "data": {
+                    "holder": 125,
+                    "liquidity": 42_000,
+                    "marketCap": 180_000,
+                    "v24hUSD": 95_000,
+                    "v1hUSD": 12_000,
+                    "v5mUSD": 1_800,
+                },
+            },
+            "/defi/v3/token/holder": RuntimeError("rate limited"),
+            "/defi/token_security": RuntimeError("rate limited"),
+        }
+    )
+
+    data = await BirdeyeService(Settings(birdeye_api_key="test-key"), client=client).enrich("TokenMint")
+
+    assert data["_source"] == "Birdeye"
+    assert data["holder_count"] == 125
+    assert data["liquidity_usd"] == 42_000
+    assert data["market_cap_usd"] == 180_000
+    assert data["_snapshot"].provider == "BIRDEYE"
+    assert data["_snapshot"].raw_response["holders"] is None
+    assert data["_snapshot"].raw_response["security"] is None
+
+
 async def test_helius_missing_api_key_fallback_does_not_crash():
     data = await HeliusService(Settings(helius_api_key=None)).enrich("TokenMint")
 
