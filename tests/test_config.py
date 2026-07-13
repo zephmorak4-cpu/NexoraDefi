@@ -20,18 +20,15 @@ def test_production_requires_core_mvp_secrets(monkeypatch):
 
     with pytest.raises(
         ValidationError,
-        match="BLOCKCHAIN_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID",
+        match="DATABASE_URL",
     ):
-        Settings(app_env="production", database_url="postgresql+asyncpg://localhost/db")
+        Settings(app_env="production", database_url="sqlite+aiosqlite:///./nexora.db")
 
 
 def test_production_requires_core_mvp_secrets_only():
     settings = Settings(
         app_env="production",
         database_url="postgresql+asyncpg://localhost/db",
-        moralis_api_key="moralis",
-        telegram_bot_token="telegram",
-        telegram_chat_id=123,
     )
 
     assert settings.app_env == "production"

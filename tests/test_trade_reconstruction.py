@@ -1,10 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from contextlib import asynccontextmanager
 
-import httpx
-
-from app.main import app
 from app.models import CandidateHistory, CandidateWallet, WalletPosition
 from app.trade_reconstruction.trade_reconstruction import TradeReconstructionEngine
 
@@ -49,32 +45,6 @@ async def test_trade_reconstruction_builds_one_position_from_many_events(db_sess
     assert position.average_exit_price == Decimal("28.750000000000000000")
     assert position.realized_roi > 0
     assert position.position_classification in {"Swing Trade", "Quick Flip", "Scalp"}
-
-
-async def test_trade_reconstruction_admin_api(db_session, monkeypatch):
-    from app.trade_reconstruction import trade_reconstruction_api
-
-    wallet = await _wallet_with_position_history(db_session)
-
-    @asynccontextmanager
-    async def fake_session_factory():
-        yield db_session
-
-    monkeypatch.setattr(trade_reconstruction_api, "SessionFactory", fake_session_factory)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        rebuilt = await client.post("/admin/rebuild-positions")
-        positions = await client.get("/admin/positions")
-        wallet_positions = await client.get(f"/admin/positions/{wallet.wallet_address}")
-        summary = await client.get("/admin/position-summary")
-        position_id = positions.json()[0]["id"]
-        detail = await client.get(f"/admin/position/{position_id}")
-
-    assert rebuilt.status_code == 200
-    assert rebuilt.json()["positions"] == 1
-    assert positions.status_code == 200
-    assert wallet_positions.status_code == 200
-    assert summary.json()["total_positions"] == 1
-    assert detail.json()["token_address"] == "TokenA"
 
 
 async def test_wallet_positions_table_accepts_reconstructed_candidate_positions(db_session):

@@ -1,4 +1,3 @@
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from json import loads as json_loads
@@ -7,15 +6,14 @@ import httpx
 from sqlalchemy import select
 
 from app.core.config import Settings
-from app.discovery import discovery_api
 from app.discovery.candidate_scoring import CandidateScoringEngine
 from app.discovery.candidate_wallet import DiscoveryEvent
 from app.discovery.discovery_engine import DiscoveryEngine
 from app.discovery.discovery_engine import SolanaDiscoverySource
 from app.services.http import AsyncAPIClient
 from app.discovery.wallet_classifier import WalletClassifier
+from app.discovery.wallet_history import WalletHistoryService
 from app.discovery.wallet_promotion import WalletPromotionService
-from app.main import app
 from app.models import CandidateHistory, CandidateWallet, TokenQuality, TrackedWallet
 
 
@@ -157,7 +155,7 @@ async def test_candidate_scoring_and_classification(db_session):
     db_session.add(TokenQuality(token_address="TokenMint", token_symbol="TKN", quality_score=90))
     await db_session.commit()
 
-    assert WalletClassifier().classify(await discovery_api.WalletHistoryService(db_session).for_candidate(candidate.id)) == "Liquidity Provider"
+    assert WalletClassifier().classify(await WalletHistoryService(db_session).for_candidate(candidate.id)) == "Liquidity Provider"
     assert await CandidateScoringEngine(db_session, Settings()).score_all() == 1
 
     refreshed = await db_session.get(CandidateWallet, candidate.id)
@@ -191,29 +189,3 @@ async def test_promotion_and_demotion_lifecycle(db_session):
     await db_session.commit()
     assert await service.evaluate_demotions() == 1
     assert tracked.status == "observing"
-
-
-async def test_discovery_admin_api_lists_candidates(db_session, monkeypatch):
-    db_session.add(
-        CandidateWallet(
-            wallet_address="candidate-sol-wallet",
-            chain="solana",
-            discovery_reason="large_token_purchase",
-            status="observing",
-        )
-    )
-    await db_session.commit()
-
-    @asynccontextmanager
-    async def fake_session_factory():
-        yield db_session
-
-    monkeypatch.setattr(discovery_api, "SessionFactory", fake_session_factory)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        candidates = await client.get("/admin/candidates")
-        stats = await client.get("/admin/discovery-stats")
-
-    assert candidates.status_code == 200
-    assert candidates.json()[0]["wallet_address"] == "candidate-sol-wallet"
-    assert stats.status_code == 200
-    assert stats.json()["candidate_wallets"] == 1
