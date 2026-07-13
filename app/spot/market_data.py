@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.config import Settings
-from app.integrations.market_data_clients import DexScreenerClient, GeckoTerminalClient
+from app.integrations.market_data_clients import BirdeyeClient, DexScreenerClient, GeckoTerminalClient
 from app.spot.types import Candle, MarketQuote, TokenAsset
 
 
@@ -37,10 +37,12 @@ class MarketDataGateway:
         settings: Settings,
         dexscreener: DexScreenerClient | None = None,
         geckoterminal: GeckoTerminalClient | None = None,
+        birdeye: BirdeyeClient | None = None,
     ) -> None:
         self.settings = settings
         self.dexscreener = dexscreener or DexScreenerClient(settings)
         self.geckoterminal = geckoterminal or GeckoTerminalClient(settings)
+        self.birdeye = birdeye or BirdeyeClient(settings)
 
     async def discover_solana_candidates(self) -> list[TokenAsset]:
         profiles = await self._safe_dex_request("/token-profiles/latest/v1") or []
@@ -112,7 +114,10 @@ class MarketDataGateway:
         if not token.primary_pool_address:
             return []
         gecko_timeframe, aggregate = self._timeframe(timeframe)
-        payload = await self.geckoterminal.ohlcv(token.primary_pool_address, gecko_timeframe, aggregate, limit)
+        try:
+            payload = await self.geckoterminal.ohlcv(token.primary_pool_address, gecko_timeframe, aggregate, limit)
+        except Exception:
+            return await self._birdeye_candles(token, timeframe, limit)
         ohlcv = (((payload or {}).get("data") or {}).get("attributes") or {}).get("ohlcv_list") or []
         candles: list[Candle] = []
         for row in ohlcv:
@@ -133,26 +138,30 @@ class MarketDataGateway:
                 is_closed=True,
             )
             candles.append(candle)
-        return sorted(candles, key=lambda candle: candle.timestamp)
+        if candles:
+            return sorted(candles, key=lambda candle: candle.timestamp)
+        return await self._birdeye_candles(token, timeframe, limit)
 
     async def quote(self, token: TokenAsset) -> MarketQuote | None:
         if not token.primary_pool_address:
             return None
-        payload = await self.dexscreener.request(f"/latest/dex/pairs/solana/{token.primary_pool_address}")
-        pairs = payload.get("pairs") if isinstance(payload, dict) else None
-        pair = pairs[0] if isinstance(pairs, list) and pairs else None
-        if not isinstance(pair, dict):
-            return None
-        price = number(pair.get("priceUsd"))
-        if not price or price <= 0:
-            return None
-        return MarketQuote(
-            token_address=token.address,
-            price_usd=price,
-            liquidity_usd=number((pair.get("liquidity") or {}).get("usd")),
-            timestamp=datetime.now(timezone.utc),
-            source="DEX Screener",
-        )
+        try:
+            payload = await self.dexscreener.request(f"/latest/dex/pairs/solana/{token.primary_pool_address}")
+            pairs = payload.get("pairs") if isinstance(payload, dict) else None
+            pair = pairs[0] if isinstance(pairs, list) and pairs else None
+            if isinstance(pair, dict):
+                price = number(pair.get("priceUsd"))
+                if price and price > 0:
+                    return MarketQuote(
+                        token_address=token.address,
+                        price_usd=price,
+                        liquidity_usd=number((pair.get("liquidity") or {}).get("usd")),
+                        timestamp=datetime.now(timezone.utc),
+                        source="DEX Screener",
+                    )
+        except Exception:
+            pass
+        return await self._birdeye_quote(token)
 
     @staticmethod
     def _timeframe(timeframe: str) -> tuple[str, int]:
@@ -162,6 +171,79 @@ class MarketDataGateway:
             return "hour", 1
         if timeframe == "4h":
             return "hour", 4
+        raise ValueError(f"unsupported timeframe: {timeframe}")
+
+    async def _birdeye_candles(self, token: TokenAsset, timeframe: str, limit: int) -> list[Candle]:
+        if not self.settings.birdeye_enabled or not self.settings.birdeye_api_key:
+            return []
+        interval, seconds = self._birdeye_interval(timeframe)
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(seconds=seconds * max(limit, 1))
+        try:
+            payload = await self.birdeye.ohlcv(token.address, interval, int(start.timestamp()), int(end.timestamp()))
+        except Exception:
+            return []
+        items = (((payload or {}).get("data") or {}).get("items") or []) if isinstance(payload, dict) else []
+        candles: list[Candle] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            timestamp_value = item.get("unixTime") or item.get("unix_time") or item.get("time")
+            open_ = number(item.get("o") or item.get("open"))
+            high = number(item.get("h") or item.get("high"))
+            low = number(item.get("l") or item.get("low"))
+            close = number(item.get("c") or item.get("close"))
+            volume = number(item.get("v") or item.get("volume")) or 0
+            if timestamp_value is None or open_ is None or high is None or low is None or close is None:
+                continue
+            if high < max(open_, close) or low > min(open_, close):
+                continue
+            candles.append(
+                Candle(
+                    token_address=token.address,
+                    pool_address=token.primary_pool_address or token.address,
+                    timeframe=timeframe,
+                    timestamp=datetime.fromtimestamp(int(timestamp_value), tz=timezone.utc),
+                    open=open_,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=volume,
+                    source="Birdeye",
+                    is_closed=True,
+                )
+            )
+        return sorted(candles[-limit:], key=lambda candle: candle.timestamp)
+
+    async def _birdeye_quote(self, token: TokenAsset) -> MarketQuote | None:
+        if not self.settings.birdeye_enabled or not self.settings.birdeye_api_key:
+            return None
+        try:
+            payload = await self.birdeye.price(token.address)
+        except Exception:
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return None
+        price = number(data.get("value"))
+        if not price or price <= 0:
+            return None
+        return MarketQuote(
+            token_address=token.address,
+            price_usd=price,
+            liquidity_usd=number(data.get("liquidity")),
+            timestamp=datetime.now(timezone.utc),
+            source="Birdeye",
+        )
+
+    @staticmethod
+    def _birdeye_interval(timeframe: str) -> tuple[str, int]:
+        if timeframe == "15m":
+            return "15m", 900
+        if timeframe == "1h":
+            return "1H", 3600
+        if timeframe == "4h":
+            return "4H", 14400
         raise ValueError(f"unsupported timeframe: {timeframe}")
 
     @staticmethod
@@ -228,3 +310,4 @@ class MarketDataGateway:
     async def close(self) -> None:
         await self.dexscreener.close()
         await self.geckoterminal.close()
+        await self.birdeye.close()

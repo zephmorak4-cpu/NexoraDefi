@@ -47,10 +47,47 @@ class BirdeyeClient:
     async def request(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return await self.client.request_json("GET", path, params=params)
 
+    async def price(self, address: str) -> Any:
+        return await self.request("/defi/price", params={"address": address})
+
+    async def ohlcv(self, address: str, interval: str, time_from: int, time_to: int) -> Any:
+        return await self.request(
+            "/defi/ohlcv",
+            params={"address": address, "type": interval, "time_from": time_from, "time_to": time_to},
+        )
+
     def configuration_status(self) -> str:
         if not self.settings.birdeye_enabled:
             return "DISABLED"
         return "CONFIGURED" if self.settings.birdeye_api_key else "NOT_CONFIGURED"
+
+    async def close(self) -> None:
+        await self.client.close()
+
+
+class CoinGeckoClient:
+    def __init__(self, settings: Settings, client: AsyncAPIClient | None = None) -> None:
+        self.settings = settings
+        headers = {}
+        if settings.coingecko_api_key:
+            headers["x-cg-demo-api-key"] = settings.coingecko_api_key
+        self.client = client or AsyncAPIClient(
+            "https://api.coingecko.com/api/v3",
+            timeout=settings.provider_timeout_ms / 1000,
+            max_retries=settings.provider_retry_count,
+            headers=headers,
+        )
+
+    async def request(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        return await self.client.request_json("GET", path, params=params)
+
+    async def ping(self) -> Any:
+        return await self.request("/ping")
+
+    def configuration_status(self) -> str:
+        if not self.settings.coingecko_enabled:
+            return "DISABLED"
+        return "CONFIGURED" if self.settings.coingecko_api_key else "NOT_CONFIGURED"
 
     async def close(self) -> None:
         await self.client.close()

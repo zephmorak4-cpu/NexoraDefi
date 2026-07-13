@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     birdeye_enabled: bool = True
     helius_enabled: bool = True
     solana_rpc_enabled: bool = True
+    coingecko_enabled: bool = False
     geckoterminal_enabled: bool = True
     jupiter_enabled: bool = True
     telegram_signals_enabled: bool = True

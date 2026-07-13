@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.integrations.market_data_clients import DexScreenerClient, GeckoTerminalClient
+from app.integrations.market_data_clients import BirdeyeClient, CoinGeckoClient, DexScreenerClient, GeckoTerminalClient
 from app.models import ProviderHealthRecord
 from app.spot.types import ProviderStatus, ReadinessState
 
@@ -48,6 +48,7 @@ class CapabilityAudit:
 CAPABILITY_MATRIX = [
     ProviderCapability("DEX Screener", discovery=True, quotes=True, liquidity=True, volume=True, metadata=True, required=True),
     ProviderCapability("GeckoTerminal", discovery=True, quotes=True, ohlcv=True, liquidity=True, volume=True, metadata=True, required=True),
+    ProviderCapability("Birdeye", quotes=True, ohlcv=True, liquidity=True, volume=True, metadata=True, required=False),
     ProviderCapability("Helius", metadata=True, required=False),
     ProviderCapability("Solana RPC", metadata=True, required=False),
     ProviderCapability("Jupiter", quotes=True, required=False),
@@ -63,6 +64,8 @@ class ProviderCapabilityService:
         checks = [
             await self._check_dexscreener(live),
             await self._check_geckoterminal(live),
+            await self._check_birdeye(live),
+            await self._check_coingecko(live),
             self._configured("Telegram", "notifications", bool(self.settings.telegram_bot_token and self.settings.telegram_chat_id), required=self.settings.telegram_signals_enabled),
             self._configured("Database", "persistence", True, required=True),
         ]
@@ -74,9 +77,9 @@ class ProviderCapabilityService:
         missing: list[str] = []
         if "DEX Screener" not in healthy and "GeckoTerminal" not in healthy:
             missing.append("token/pool discovery")
-        if "GeckoTerminal" not in healthy:
+        if "GeckoTerminal" not in healthy and "Birdeye" not in healthy:
             missing.append("15m/1h/4h OHLCV candles")
-        if "DEX Screener" not in healthy and "GeckoTerminal" not in healthy:
+        if "DEX Screener" not in healthy and "GeckoTerminal" not in healthy and "Birdeye" not in healthy:
             missing.append("current price quotes")
         if self.settings.telegram_signals_enabled and "Telegram" not in healthy:
             missing.append("Telegram notifications")
@@ -118,6 +121,49 @@ class ProviderCapabilityService:
             return self._http_error("GeckoTerminal", "OHLCV", exc)
         except Exception as exc:
             return ProviderCheck("GeckoTerminal", "OHLCV", ProviderStatus.OFFLINE, error=type(exc).__name__, action="check network/DNS/provider availability")
+        finally:
+            await client.close()
+
+    async def _check_birdeye(self, live: bool) -> ProviderCheck:
+        if not self.settings.birdeye_enabled:
+            return ProviderCheck("Birdeye", "quotes/OHLCV", ProviderStatus.NOT_CONFIGURED, action="enable BIRDEYE_ENABLED")
+        if not self.settings.birdeye_api_key:
+            return ProviderCheck("Birdeye", "quotes/OHLCV", ProviderStatus.NOT_CONFIGURED, action="provide BIRDEYE_API_KEY")
+        if not live:
+            return ProviderCheck("Birdeye", "quotes/OHLCV", ProviderStatus.CHECKING)
+        client = BirdeyeClient(self.settings)
+        start = perf_counter()
+        try:
+            payload = await client.price("So11111111111111111111111111111111111111112")
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict) or data.get("value") is None:
+                return ProviderCheck("Birdeye", "quotes/OHLCV", ProviderStatus.SCHEMA_CHANGED, error="missing price value")
+            return ProviderCheck("Birdeye", "quotes/OHLCV", ProviderStatus.HEALTHY, int((perf_counter() - start) * 1000), last_success_at=datetime.now(timezone.utc))
+        except httpx.HTTPStatusError as exc:
+            return self._http_error("Birdeye", "quotes/OHLCV", exc)
+        except Exception as exc:
+            return ProviderCheck("Birdeye", "quotes/OHLCV", ProviderStatus.OFFLINE, error=type(exc).__name__, action="check key/quota/provider availability")
+        finally:
+            await client.close()
+
+    async def _check_coingecko(self, live: bool) -> ProviderCheck:
+        if not self.settings.coingecko_enabled:
+            return ProviderCheck("CoinGecko", "optional market data", ProviderStatus.NOT_CONFIGURED, action="enable COINGECKO_ENABLED")
+        if not self.settings.coingecko_api_key:
+            return ProviderCheck("CoinGecko", "optional market data", ProviderStatus.NOT_CONFIGURED, action="provide COINGECKO_API_KEY")
+        if not live:
+            return ProviderCheck("CoinGecko", "optional market data", ProviderStatus.CHECKING)
+        client = CoinGeckoClient(self.settings)
+        start = perf_counter()
+        try:
+            payload = await client.ping()
+            if not isinstance(payload, dict):
+                return ProviderCheck("CoinGecko", "optional market data", ProviderStatus.SCHEMA_CHANGED, error="expected object")
+            return ProviderCheck("CoinGecko", "optional market data", ProviderStatus.HEALTHY, int((perf_counter() - start) * 1000), last_success_at=datetime.now(timezone.utc))
+        except httpx.HTTPStatusError as exc:
+            return self._http_error("CoinGecko", "optional market data", exc)
+        except Exception as exc:
+            return ProviderCheck("CoinGecko", "optional market data", ProviderStatus.OFFLINE, error=type(exc).__name__, action="check key/quota/provider availability")
         finally:
             await client.close()
 

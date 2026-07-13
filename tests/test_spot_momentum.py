@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.core.config import Settings
-from app.integrations.market_data_clients import DexScreenerClient, GeckoTerminalClient
+from app.integrations.market_data_clients import BirdeyeClient, DexScreenerClient, GeckoTerminalClient
 from app.services.http import AsyncAPIClient
 from app.spot.backtest import BacktestEngine
 from app.spot.indicators import atr, ema, validate_closed_candles
@@ -146,4 +146,32 @@ async def test_market_data_gateway_normalizes_dexscreener_and_gecko():
     assert tokens[0].address == "TokenA"
     assert {token.address for token in tokens} == {"TokenA", "TokenB"}
     assert (await gateway.candles(tokens[0], "15m"))[0].close == 1.5
+    await gateway.close()
+
+
+async def test_market_data_gateway_uses_birdeye_ohlcv_fallback():
+    token = TokenAsset(chain="solana", address="TokenA", symbol="TOK", name="Token", primary_pool_address="PoolA")
+
+    def dex_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    def gecko_handler(request: httpx.Request) -> httpx.Response:
+        if "ohlcv" in request.url.path:
+            return httpx.Response(429, json={"message": "rate limited"})
+        return httpx.Response(200, json={"data": []})
+
+    def birdeye_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/defi/ohlcv":
+            return httpx.Response(200, json={"data": {"items": [{"unixTime": 1780000000, "o": 1, "h": 2, "l": 0.5, "c": 1.5, "v": 100}]}})
+        if request.url.path == "/defi/price":
+            return httpx.Response(200, json={"success": True, "data": {"value": 1.25, "liquidity": 1000}})
+        return httpx.Response(404)
+
+    settings = Settings(birdeye_api_key="test")
+    dex = DexScreenerClient(settings, AsyncAPIClient("https://api.dexscreener.com", client=httpx.AsyncClient(base_url="https://api.dexscreener.com", transport=httpx.MockTransport(dex_handler))))
+    gecko = GeckoTerminalClient(settings, AsyncAPIClient("https://api.geckoterminal.com/api/v2", client=httpx.AsyncClient(base_url="https://api.geckoterminal.com/api/v2", transport=httpx.MockTransport(gecko_handler))))
+    birdeye = BirdeyeClient(settings, AsyncAPIClient("https://public-api.birdeye.so", client=httpx.AsyncClient(base_url="https://public-api.birdeye.so", transport=httpx.MockTransport(birdeye_handler))))
+    gateway = MarketDataGateway(settings, dex, gecko, birdeye)
+    assert (await gateway.candles(token, "15m"))[0].source == "Birdeye"
+    assert (await gateway.quote(token)).source == "Birdeye"
     await gateway.close()
