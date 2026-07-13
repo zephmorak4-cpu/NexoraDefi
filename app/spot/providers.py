@@ -76,7 +76,7 @@ class ProviderCapabilityService:
         healthy = {check.provider: check for check in checks if check.status == ProviderStatus.HEALTHY}
         missing: list[str] = []
         if "DEX Screener" not in healthy and "GeckoTerminal" not in healthy:
-            missing.append("token/pool discovery")
+            missing.append("established Solana asset retrieval")
         if "GeckoTerminal" not in healthy and "Birdeye" not in healthy:
             missing.append("15m/1h/4h OHLCV candles")
         if "DEX Screener" not in healthy and "GeckoTerminal" not in healthy and "Birdeye" not in healthy:
@@ -88,20 +88,20 @@ class ProviderCapabilityService:
 
     async def _check_dexscreener(self, live: bool) -> ProviderCheck:
         if not self.settings.dexscreener_enabled:
-            return ProviderCheck("DEX Screener", "discovery/quotes", ProviderStatus.NOT_CONFIGURED, action="enable DEXSCREENER_ENABLED")
+            return ProviderCheck("DEX Screener", "established assets/quotes", ProviderStatus.NOT_CONFIGURED, action="enable DEXSCREENER_ENABLED")
         if not live:
-            return ProviderCheck("DEX Screener", "discovery/quotes", ProviderStatus.CHECKING)
+            return ProviderCheck("DEX Screener", "established assets/quotes", ProviderStatus.CHECKING)
         client = DexScreenerClient(self.settings)
         start = perf_counter()
         try:
-            payload = await client.request("/token-profiles/latest/v1")
-            if not isinstance(payload, list):
-                return ProviderCheck("DEX Screener", "discovery/quotes", ProviderStatus.SCHEMA_CHANGED, error="expected list")
-            return ProviderCheck("DEX Screener", "discovery/quotes", ProviderStatus.HEALTHY, int((perf_counter() - start) * 1000), last_success_at=datetime.now(timezone.utc))
+            payload = await client.request("/latest/dex/search", params={"q": "solana"})
+            if not isinstance(payload, dict) or "pairs" not in payload:
+                return ProviderCheck("DEX Screener", "established assets/quotes", ProviderStatus.SCHEMA_CHANGED, error="expected pairs object")
+            return ProviderCheck("DEX Screener", "established assets/quotes", ProviderStatus.HEALTHY, int((perf_counter() - start) * 1000), last_success_at=datetime.now(timezone.utc))
         except httpx.HTTPStatusError as exc:
-            return self._http_error("DEX Screener", "discovery/quotes", exc)
+            return self._http_error("DEX Screener", "established assets/quotes", exc)
         except Exception as exc:
-            return ProviderCheck("DEX Screener", "discovery/quotes", ProviderStatus.OFFLINE, error=type(exc).__name__, action="check network/DNS/provider availability")
+            return ProviderCheck("DEX Screener", "established assets/quotes", ProviderStatus.OFFLINE, error=type(exc).__name__, action="check network/DNS/provider availability")
         finally:
             await client.close()
 

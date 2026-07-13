@@ -6,7 +6,7 @@ Nexora now runs a Solana-only spot momentum engine in paper-trading mode.
 
 ```text
 provider capability audit
-  -> dynamic Solana token discovery
+  -> established Solana asset retrieval
   -> eligibility and ranking
   -> CORE/CANDIDATE/EXCLUDED universe persistence
   -> OHLCV candle refresh
@@ -20,7 +20,7 @@ provider capability audit
 ## Main Modules
 
 - `app/spot/providers.py`: provider capability matrix and readiness audit.
-- `app/spot/market_data.py`: normalized DexScreener and GeckoTerminal market data.
+- `app/spot/market_data.py`: normalized established-market candidates, quotes, and OHLCV candles.
 - `app/spot/universe.py`: hard filters, ranking, tiers, exclusion reasons.
 - `app/spot/strategy.py`: one strategy, deterministic indicators, stops, targets, quality score.
 - `app/spot/paper.py`: virtual position creation and conservative fill logic.

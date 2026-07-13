@@ -43,36 +43,29 @@ class MarketDataGateway:
         self.dexscreener = dexscreener or DexScreenerClient(settings)
         self.geckoterminal = geckoterminal or GeckoTerminalClient(settings)
         self.birdeye = birdeye or BirdeyeClient(settings)
+        self.last_source_stats: list[dict[str, object]] = []
 
-    async def discover_solana_candidates(self) -> list[TokenAsset]:
-        profiles = await self._safe_dex_request("/token-profiles/latest/v1") or []
+    async def retrieve_universe_candidates(self) -> list[TokenAsset]:
         tokens: dict[str, TokenAsset] = {}
-        for profile in profiles if isinstance(profiles, list) else []:
-            if not isinstance(profile, dict) or profile.get("chainId") != "solana":
-                continue
-            token_address = str(profile.get("tokenAddress") or "")
-            if not token_address:
-                continue
-            pairs = await self._safe_dex_request(f"/token-pairs/v1/solana/{token_address}") or []
-            for pair in pairs if isinstance(pairs, list) else []:
-                asset = self._asset_from_dex_pair(pair)
-                if asset:
-                    self._add_best(tokens, asset)
-        for asset in await self._dex_search_candidates():
+        self.last_source_stats = []
+        for asset in await self._dex_market_candidates():
             self._add_best(tokens, asset)
-        if len(tokens) < self.settings.candidate_universe_size:
-            for asset in await self._gecko_candidates():
-                self._add_best(tokens, asset)
+        for asset in await self._gecko_candidates():
+            self._add_best(tokens, asset)
         return list(tokens.values())
 
     async def _gecko_candidates(self) -> list[TokenAsset]:
         assets: list[TokenAsset] = []
-        for page in range(1, self.settings.discovery_gecko_pages + 1):
+        pages_succeeded = 0
+        raw_assets = 0
+        for page in range(1, self.settings.universe_gecko_pages + 1):
             try:
                 payload = await self.geckoterminal.network_pools(page=page)
             except Exception:
                 continue
+            pages_succeeded += 1
             for item in payload.get("data", []) if isinstance(payload, dict) else []:
+                raw_assets += 1
                 attributes = item.get("attributes") or {}
                 relationships = item.get("relationships") or {}
                 base = (relationships.get("base_token", {}).get("data") or {}).get("id", "")
@@ -96,18 +89,46 @@ class MarketDataGateway:
                         data_sources=["GeckoTerminal"],
                     )
                 )
-        return [asset for asset in assets if asset.address]
+        normalized = [asset for asset in assets if asset.address]
+        self.last_source_stats.append(
+            {
+                "provider": "GeckoTerminal",
+                "source": "ranked_solana_pools",
+                "pages_requested": self.settings.universe_gecko_pages,
+                "pages_succeeded": pages_succeeded,
+                "raw_assets": raw_assets,
+                "normalized_assets": len(normalized),
+                "unique_mints": len({asset.address for asset in normalized}),
+            }
+        )
+        return normalized
 
-    async def _dex_search_candidates(self) -> list[TokenAsset]:
-        queries = [item.strip() for item in self.settings.discovery_dex_search_queries.split(",") if item.strip()]
+    async def _dex_market_candidates(self) -> list[TokenAsset]:
+        queries = [item.strip() for item in self.settings.universe_dex_search_queries.split(",") if item.strip()]
         assets: list[TokenAsset] = []
+        queries_succeeded = 0
+        raw_pairs = 0
         for query in queries:
             payload = await self._safe_dex_request("/latest/dex/search", params={"q": query})
+            if isinstance(payload, dict):
+                queries_succeeded += 1
             pairs = payload.get("pairs") if isinstance(payload, dict) else None
             for pair in pairs if isinstance(pairs, list) else []:
+                raw_pairs += 1
                 asset = self._asset_from_dex_pair(pair)
                 if asset:
                     assets.append(asset)
+        self.last_source_stats.append(
+            {
+                "provider": "DEX Screener",
+                "source": "current_market_search",
+                "pages_requested": len(queries),
+                "pages_succeeded": queries_succeeded,
+                "raw_assets": raw_pairs,
+                "normalized_assets": len(assets),
+                "unique_mints": len({asset.address for asset in assets}),
+            }
+        )
         return assets
 
     async def candles(self, token: TokenAsset, timeframe: str, limit: int = 200) -> list[Candle]:
@@ -286,6 +307,9 @@ class MarketDataGateway:
         if existing is None:
             tokens[asset.address] = asset
             return
+        oldest_created_at = asset.created_at or existing.created_at
+        if asset.created_at and existing.created_at:
+            oldest_created_at = min(asset.created_at, existing.created_at)
         if (asset.liquidity_usd or 0) > (existing.liquidity_usd or 0):
             sources = sorted(set(existing.data_sources + asset.data_sources))
             tokens[asset.address] = TokenAsset(
@@ -294,7 +318,7 @@ class MarketDataGateway:
                 symbol=asset.symbol,
                 name=asset.name,
                 decimals=asset.decimals or existing.decimals,
-                created_at=asset.created_at or existing.created_at,
+                created_at=oldest_created_at,
                 market_cap_usd=asset.market_cap_usd or existing.market_cap_usd,
                 fdv_usd=asset.fdv_usd or existing.fdv_usd,
                 liquidity_usd=asset.liquidity_usd or existing.liquidity_usd,
@@ -303,6 +327,24 @@ class MarketDataGateway:
                 primary_dex=asset.primary_dex or existing.primary_dex,
                 quote_asset=asset.quote_asset or existing.quote_asset,
                 data_sources=sources,
+            )
+            return
+        if oldest_created_at != existing.created_at:
+            tokens[asset.address] = TokenAsset(
+                chain=existing.chain,
+                address=existing.address,
+                symbol=existing.symbol,
+                name=existing.name,
+                decimals=existing.decimals,
+                created_at=oldest_created_at,
+                market_cap_usd=existing.market_cap_usd or asset.market_cap_usd,
+                fdv_usd=existing.fdv_usd or asset.fdv_usd,
+                liquidity_usd=existing.liquidity_usd,
+                volume_24h_usd=existing.volume_24h_usd,
+                primary_pool_address=existing.primary_pool_address,
+                primary_dex=existing.primary_dex,
+                quote_asset=existing.quote_asset,
+                data_sources=sorted(set(existing.data_sources + asset.data_sources)),
             )
             return
         existing.data_sources.extend(source for source in asset.data_sources if source not in existing.data_sources)

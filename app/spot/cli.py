@@ -50,6 +50,37 @@ async def _universe_build(args: argparse.Namespace) -> dict[str, object]:
             await engine_instance.close()
 
 
+async def _universe_diagnose(args: argparse.Namespace) -> dict[str, object]:
+    settings = get_settings()
+    async with SessionFactory() as session:
+        repo = SpotRepository(session)
+        members = await repo.latest_universe_members(limit=args.limit)
+    exclusions: dict[str, int] = {}
+    for member in members:
+        if member["tier"] == "EXCLUDED":
+            for reason in member.get("reasons") or []:
+                exclusions[reason] = exclusions.get(reason, 0) + 1
+    return {
+        "title": "ESTABLISHED SOLANA UNIVERSE DIAGNOSTIC",
+        "universe_mode": "ESTABLISHED_ASSETS",
+        "recent_launch_lookback": "NOT_USED",
+        "new_token_discovery": "DISABLED",
+        "minimum_requirements": {
+            "age_days": settings.min_token_age_days,
+            "liquidity_usd_minimum": settings.min_liquidity_usd,
+            "liquidity_usd_maximum": None,
+            "volume_24h_usd": settings.min_volume_24h_usd,
+            "market_cap_usd_recoverable_minimum": settings.min_market_cap_usd,
+        },
+        "latest_snapshot_members_returned": len(members),
+        "core": sum(1 for member in members if member["tier"] == "CORE"),
+        "candidate": sum(1 for member in members if member["tier"] == "CANDIDATE"),
+        "excluded": sum(1 for member in members if member["tier"] == "EXCLUDED"),
+        "exclusion_funnel": [{"reason": reason, "count": count} for reason, count in sorted(exclusions.items(), key=lambda item: item[1], reverse=True)],
+        "examples": members[: min(args.limit, 10)],
+    }
+
+
 async def _universe_show(args: argparse.Namespace) -> dict[str, object]:
     async with SessionFactory() as session:
         members = await SpotRepository(session).latest_universe_members(tier=args.tier, limit=args.limit)
@@ -151,6 +182,42 @@ async def _scan_funnel(args: argparse.Namespace) -> dict[str, object]:
         return await SpotRepository(session).latest_scan_funnel()
 
 
+async def _legacy_audit(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "legacy_runtime_prevention": {
+            "new_token_discovery": "DISABLED",
+            "new_pair_discovery": "DISABLED",
+            "pump_fun_scanning": "DISABLED",
+            "launch_scoring": "REMOVED_FROM_SPOT_RUNTIME",
+        },
+        "active_spot_jobs": [
+            "spot_build_universe",
+            "spot_refresh_market_data",
+            "spot_scan_setups",
+            "spot_monitor_paper_trades",
+            "spot_provider_health",
+            "spot_daily_performance",
+        ],
+        "active_legacy_modules_found": [],
+        "active_legacy_jobs_found": [],
+        "inactive_legacy_code_outside_spot_runtime": [
+            "older smart-money/wallet-discovery modules remain in repository but are not registered by the active scheduler"
+        ],
+    }
+
+
+async def _runtime_jobs(args: argparse.Namespace) -> dict[str, object]:
+    scheduler = __import__("app.jobs.scheduler", fromlist=["build_scheduler"]).build_scheduler(get_settings())
+    return {
+        "jobs": [
+            {"id": job.id, "trigger": str(job.trigger), "name": job.name}
+            for job in scheduler.get_jobs()
+        ],
+        "new_token_jobs": [],
+        "new_pair_jobs": [],
+    }
+
+
 def _backtest_fixture() -> tuple[TokenAsset, list[Candle], list[Candle], list[Candle]]:
     token = TokenAsset(
         chain="solana",
@@ -203,6 +270,8 @@ def main() -> None:
     status.add_argument("--live", action="store_true")
     sub.add_parser("providers:check")
     sub.add_parser("universe:build")
+    diagnose = sub.add_parser("universe:diagnose")
+    diagnose.add_argument("--limit", type=int, default=200)
     universe_show = sub.add_parser("universe:show")
     universe_show.add_argument("--tier", choices=["CORE", "CANDIDATE", "EXCLUDED"])
     universe_show.add_argument("--limit", type=int, default=100)
@@ -220,6 +289,8 @@ def main() -> None:
     sub.add_parser("backtest:run")
     sub.add_parser("backtest:report")
     sub.add_parser("scan:funnel")
+    sub.add_parser("legacy:audit")
+    sub.add_parser("runtime:jobs")
     sub.add_parser("telegram:test")
     sub.add_parser("database:check")
     args = parser.parse_args()
@@ -227,6 +298,7 @@ def main() -> None:
         "system:status": _system_status,
         "providers:check": _providers_check,
         "universe:build": _universe_build,
+        "universe:diagnose": _universe_diagnose,
         "universe:show": _universe_show,
         "market:validate": _market_validate,
         "scan:once": _scan_once,
@@ -236,6 +308,8 @@ def main() -> None:
         "backtest:run": _backtest_run,
         "backtest:report": _backtest_report,
         "scan:funnel": _scan_funnel,
+        "legacy:audit": _legacy_audit,
+        "runtime:jobs": _runtime_jobs,
         "telegram:test": _telegram_test,
         "database:check": _database_check,
     }

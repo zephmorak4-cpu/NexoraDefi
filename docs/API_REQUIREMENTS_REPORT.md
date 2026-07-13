@@ -8,7 +8,7 @@ None currently missing for local paper-observation checks.
 
 ## Critical Providers Working
 
-- DexScreener: `HEALTHY`, used for discovery and current quote checks.
+- DexScreener: `HEALTHY`, used for established market search and current quote checks.
 - GeckoTerminal: `HEALTHY`, used for OHLCV capability.
 - Birdeye: `HEALTHY`, used for quote/OHLCV fallback when quota allows.
 - Telegram: `HEALTHY`, used for paper-trade notifications.
@@ -37,24 +37,25 @@ Birdeye:
 
 ## Universe Build Result
 
-- Candidates discovered: 130
-- Eligible: 4
-- CORE: 4
+- Raw candidates retrieved: 249
+- Eligible: 3
+- CORE: 3
 - CANDIDATE: 0
-- EXCLUDED: 126
+- EXCLUDED: 246
 
 Top exclusions:
 
-- insufficient 24h volume: 125
-- insufficient liquidity: 56
-- insufficient market cap: 56
-- insufficient age: 27
-- unsupported quote asset: 3
+- insufficient liquidity: 158
+- insufficient 24h volume: 152
+- insufficient market cap: 144
+- pump.fun launch asset excluded: 57
+- insufficient age: 15
+- unsupported quote asset: 12
 
 ## Latest Scan Funnel
 
-- Tokens evaluated: 4
+- Tokens evaluated: 3
 - Signals generated: 0
 - Rejection reasons:
-  - valid consolidation not detected: 3
+  - valid consolidation not detected: 2
   - bearish regime blocked longs: 1

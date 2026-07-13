@@ -4,7 +4,7 @@
 
 | Provider | Current Use | Required |
 | --- | --- | --- |
-| DexScreener | token/pool discovery, metadata, liquidity, volume, quote checks | yes |
+| DexScreener | established market search, metadata, liquidity, volume, quote checks | yes |
 | GeckoTerminal | OHLCV candle source | yes |
 | Birdeye | quote and OHLCV fallback when configured | no |
 | Telegram | paper-trade alerts and test messages | yes when Telegram alerts are enabled |

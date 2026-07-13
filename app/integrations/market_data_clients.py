@@ -24,7 +24,7 @@ class DexScreenerClient:
         if not self.settings.dexscreener_enabled:
             return "DISABLED"
         try:
-            await self.request("/token-profiles/latest/v1")
+            await self.request("/latest/dex/search", params={"q": "solana"})
             return "AVAILABLE"
         except Exception:
             return "UNAVAILABLE"

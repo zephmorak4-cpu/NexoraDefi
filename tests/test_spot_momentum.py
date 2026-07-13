@@ -96,6 +96,127 @@ def test_universe_filters_and_ranks_tokens():
     assert build.excluded[0].reasons
 
 
+def test_established_high_liquidity_token_is_eligible_without_liquidity_ceiling():
+    token = TokenAsset(
+        chain="solana",
+        address="EstablishedHighLiquidity",
+        symbol="HIGH",
+        name="High Liquidity",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        liquidity_usd=25_000_000,
+        volume_24h_usd=12_000_000,
+        market_cap_usd=300_000_000,
+        primary_pool_address="Pool",
+        quote_asset="USDC",
+    )
+    build = UniverseBuilder(Settings()).build([token])
+    assert build.core[0].token.address == token.address
+    assert build.excluded == []
+
+
+def test_mature_token_at_minimum_liquidity_is_eligible():
+    token = TokenAsset(
+        chain="solana",
+        address="EstablishedMinimumLiquidity",
+        symbol="MIN",
+        name="Minimum Liquidity",
+        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        liquidity_usd=550_000,
+        volume_24h_usd=1_500_000,
+        market_cap_usd=20_000_000,
+        primary_pool_address="Pool",
+        quote_asset="SOL",
+    )
+    build = UniverseBuilder(Settings()).build([token])
+    assert build.core[0].token.address == token.address
+
+
+def test_new_token_with_strong_liquidity_is_excluded_only_by_age():
+    token = TokenAsset(
+        chain="solana",
+        address="ImmatureToken",
+        symbol="YOUNG",
+        name="Young",
+        created_at=datetime.now(timezone.utc) - timedelta(days=3),
+        liquidity_usd=2_000_000,
+        volume_24h_usd=8_000_000,
+        market_cap_usd=50_000_000,
+        primary_pool_address="Pool",
+        quote_asset="USDC",
+    )
+    build = UniverseBuilder(Settings()).build([token])
+    assert build.excluded[0].token.address == token.address
+    assert build.excluded[0].reasons == ["insufficient age"]
+
+
+def test_pump_fun_style_assets_are_excluded_from_established_universe():
+    token = TokenAsset(
+        chain="solana",
+        address="pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+        symbol="PUMP",
+        name="Pump",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        liquidity_usd=25_000_000,
+        volume_24h_usd=30_000_000,
+        market_cap_usd=300_000_000,
+        primary_pool_address="Pool",
+        quote_asset="USDC",
+    )
+    build = UniverseBuilder(Settings()).build([token])
+    assert build.core == []
+    assert "pump.fun launch asset excluded" in build.excluded[0].reasons
+
+
+def test_null_market_cap_does_not_force_zero_rejection_when_other_critical_fields_pass():
+    token = TokenAsset(
+        chain="solana",
+        address="NullMarketCapToken",
+        symbol="NULLMC",
+        name="Null Market Cap",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        liquidity_usd=5_000_000,
+        volume_24h_usd=3_000_000,
+        market_cap_usd=None,
+        fdv_usd=None,
+        primary_pool_address="Pool",
+        quote_asset="USDC",
+    )
+    build = UniverseBuilder(Settings()).build([token])
+    assert build.core[0].token.address == token.address
+
+
+def test_established_token_with_new_secondary_pool_keeps_oldest_age():
+    older = TokenAsset(
+        chain="solana",
+        address="SameToken",
+        symbol="SAME",
+        name="Same",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        liquidity_usd=1_000_000,
+        volume_24h_usd=2_000_000,
+        market_cap_usd=20_000_000,
+        primary_pool_address="OldPool",
+        quote_asset="USDC",
+    )
+    newer = TokenAsset(
+        chain="solana",
+        address="SameToken",
+        symbol="SAME",
+        name="Same",
+        created_at=datetime.now(timezone.utc) - timedelta(days=2),
+        liquidity_usd=2_000_000,
+        volume_24h_usd=3_000_000,
+        market_cap_usd=20_000_000,
+        primary_pool_address="NewPool",
+        quote_asset="USDC",
+    )
+    tokens = {older.address: older}
+    MarketDataGateway._add_best(tokens, newer)
+    build = UniverseBuilder(Settings()).build(list(tokens.values()))
+    assert build.core[0].token.address == "SameToken"
+    assert build.core[0].token.created_at == older.created_at
+
+
 async def test_provider_audit_reports_missing_telegram_when_enabled(db_session):
     settings = Settings(telegram_signals_enabled=True, telegram_bot_token=None, telegram_chat_id=None)
     audit = await ProviderCapabilityService(settings).audit(session=db_session, live=False)
@@ -124,11 +245,10 @@ def test_backtest_uses_same_strategy_fixture():
 
 
 async def test_market_data_gateway_normalizes_dexscreener_and_gecko():
+    seen_paths: list[str] = []
+
     def dex_handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/token-profiles/latest/v1":
-            return httpx.Response(200, json=[{"chainId": "solana", "tokenAddress": "TokenA"}])
-        if request.url.path == "/token-pairs/v1/solana/TokenA":
-            return httpx.Response(200, json=[{"chainId": "solana", "pairAddress": "PoolA", "dexId": "orca", "baseToken": {"address": "TokenA", "symbol": "TOK", "name": "Token"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": "1000000"}, "volume": {"h24": "2000000"}, "marketCap": "10000000"}])
+        seen_paths.append(request.url.path)
         if request.url.path == "/latest/dex/search":
             return httpx.Response(200, json={"pairs": [{"chainId": "solana", "pairAddress": "PoolB", "dexId": "raydium", "baseToken": {"address": "TokenB", "symbol": "JUP", "name": "Jupiter"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": "3000000"}, "volume": {"h24": "5000000"}, "marketCap": "100000000"}]})
         return httpx.Response(404)
@@ -142,9 +262,9 @@ async def test_market_data_gateway_normalizes_dexscreener_and_gecko():
     dex = DexScreenerClient(settings, AsyncAPIClient("https://api.dexscreener.com", client=httpx.AsyncClient(base_url="https://api.dexscreener.com", transport=httpx.MockTransport(dex_handler))))
     gecko = GeckoTerminalClient(settings, AsyncAPIClient("https://api.geckoterminal.com/api/v2", client=httpx.AsyncClient(base_url="https://api.geckoterminal.com/api/v2", transport=httpx.MockTransport(gecko_handler))))
     gateway = MarketDataGateway(settings, dex, gecko)
-    tokens = await gateway.discover_solana_candidates()
-    assert tokens[0].address == "TokenA"
-    assert {token.address for token in tokens} == {"TokenA", "TokenB"}
+    tokens = await gateway.retrieve_universe_candidates()
+    assert "/token-profiles/latest/v1" not in seen_paths
+    assert {token.address for token in tokens} == {"TokenB"}
     assert (await gateway.candles(tokens[0], "15m"))[0].close == 1.5
     await gateway.close()
 
@@ -174,4 +294,41 @@ async def test_market_data_gateway_uses_birdeye_ohlcv_fallback():
     gateway = MarketDataGateway(settings, dex, gecko, birdeye)
     assert (await gateway.candles(token, "15m"))[0].source == "Birdeye"
     assert (await gateway.quote(token)).source == "Birdeye"
+    await gateway.close()
+
+
+async def test_established_universe_retrieval_reads_later_gecko_pages():
+    def dex_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"pairs": []})
+
+    def gecko_handler(request: httpx.Request) -> httpx.Response:
+        page = request.url.params.get("page")
+        if page == "3":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "solana_pool_page3",
+                            "attributes": {
+                                "name": "PAGE3/USDC",
+                                "dex_id": "orca",
+                                "reserve_in_usd": "2000000",
+                                "volume_usd": {"h24": "3000000"},
+                                "market_cap_usd": "50000000",
+                            },
+                            "relationships": {"base_token": {"data": {"id": "solana_Page3Token"}}},
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"data": []})
+
+    settings = Settings(universe_gecko_pages=3, universe_dex_search_queries="unused")
+    dex = DexScreenerClient(settings, AsyncAPIClient("https://api.dexscreener.com", client=httpx.AsyncClient(base_url="https://api.dexscreener.com", transport=httpx.MockTransport(dex_handler))))
+    gecko = GeckoTerminalClient(settings, AsyncAPIClient("https://api.geckoterminal.com/api/v2", client=httpx.AsyncClient(base_url="https://api.geckoterminal.com/api/v2", transport=httpx.MockTransport(gecko_handler))))
+    gateway = MarketDataGateway(settings, dex, gecko)
+    tokens = await gateway.retrieve_universe_candidates()
+    assert [token.address for token in tokens] == ["Page3Token"]
+    assert gateway.last_source_stats[-1]["pages_requested"] == 3
     await gateway.close()

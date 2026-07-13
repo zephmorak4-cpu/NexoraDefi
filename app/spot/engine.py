@@ -39,13 +39,18 @@ class SpotMomentumEngine:
         self.config = strategy_config_from_settings(settings)
 
     async def build_universe(self, session: AsyncSession) -> dict[str, object]:
-        tokens = await self.market_data.discover_solana_candidates()
+        tokens = await self.market_data.retrieve_universe_candidates()
         build = UniverseBuilder(self.settings).build(tokens)
         await SpotRepository(session).save_universe(build)
         await session.commit()
         return {
             "snapshot_id": build.snapshot_id,
-            "candidates_discovered": build.candidates_discovered,
+            "universe_mode": "ESTABLISHED_ASSETS",
+            "new_token_discovery": "DISABLED",
+            "recent_launch_lookback": "NOT_USED",
+            "providers_queried": self.market_data.last_source_stats,
+            "raw_candidates_retrieved": build.raw_candidates_retrieved,
+            "established_assets_evaluated": len(tokens),
             "eligible": len(build.eligible),
             "core": len(build.core),
             "candidate": len(build.candidate),

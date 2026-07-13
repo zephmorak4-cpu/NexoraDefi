@@ -22,7 +22,7 @@ class RankedToken:
 @dataclass(frozen=True)
 class UniverseBuild:
     snapshot_id: str
-    candidates_discovered: int
+    raw_candidates_retrieved: int
     eligible: list[RankedToken]
     core: list[RankedToken]
     candidate: list[RankedToken]
@@ -40,6 +40,8 @@ class TokenEligibilityService:
             reasons.append("not Solana")
         if token.symbol.upper() in STABLE_SYMBOLS:
             reasons.append("stablecoin excluded")
+        if token.address.lower().endswith("pump") or token.symbol.upper() == "PUMP":
+            reasons.append("pump.fun launch asset excluded")
         if token.created_at:
             age_days = (datetime.now(timezone.utc) - token.created_at).days
             if age_days < self.settings.min_token_age_days:
@@ -48,10 +50,10 @@ class TokenEligibilityService:
             reasons.append("insufficient liquidity")
         if (token.volume_24h_usd or 0) < self.settings.min_volume_24h_usd:
             reasons.append("insufficient 24h volume")
-        market_cap = token.market_cap_usd or token.fdv_usd or 0
-        if market_cap < self.settings.min_market_cap_usd:
+        market_cap = token.market_cap_usd if token.market_cap_usd is not None else token.fdv_usd
+        if market_cap is not None and market_cap < self.settings.min_market_cap_usd:
             reasons.append("insufficient market cap")
-        if self.settings.max_market_cap_usd and market_cap > self.settings.max_market_cap_usd:
+        if self.settings.max_market_cap_usd and market_cap is not None and market_cap > self.settings.max_market_cap_usd:
             reasons.append("market cap above maximum")
         if not token.primary_pool_address:
             reasons.append("missing primary pool")
@@ -64,7 +66,8 @@ class TokenRankingService:
     def score(self, token: TokenAsset) -> tuple[float, dict[str, float]]:
         liquidity = min((token.liquidity_usd or 0) / 5_000_000, 1) * 25
         volume = min((token.volume_24h_usd or 0) / 10_000_000, 1) * 20
-        market = min(((token.market_cap_usd or token.fdv_usd or 0) / 100_000_000), 1) * 15
+        market_cap = token.market_cap_usd if token.market_cap_usd is not None else token.fdv_usd
+        market = min(((market_cap or 0) / 100_000_000), 1) * 15
         pool = 10 if token.primary_pool_address else 0
         continuity = 10
         volatility = 20
@@ -106,11 +109,10 @@ class UniverseBuilder:
         exclusions = Counter(reason for item in excluded for reason in item.reasons)
         return UniverseBuild(
             snapshot_id=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
-            candidates_discovered=len(tokens),
+            raw_candidates_retrieved=len(tokens),
             eligible=eligible,
             core=core,
             candidate=candidate,
             excluded=excluded,
             exclusion_summary=[{"reason": reason, "count": count} for reason, count in exclusions.most_common(10)],
         )
-

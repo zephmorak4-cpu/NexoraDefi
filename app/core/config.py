@@ -69,8 +69,8 @@ class Settings(BaseSettings):
 
     target_universe_size: int = 30
     candidate_universe_size: int = 100
-    discovery_gecko_pages: int = 5
-    discovery_dex_search_queries: str = "solana,SOL,USDC,JUP,RAY,ORCA,BONK,WIF,JTO,PYTH,Jupiter,Raydium,Orca"
+    universe_gecko_pages: int = 8
+    universe_dex_search_queries: str = "solana,SOL,USDC,JUP,RAY,ORCA,BONK,WIF,JTO,PYTH,Jupiter,Raydium,Orca,Marinade,Kamino,Tensor,Drift"
     min_token_age_days: int = 30
     min_liquidity_usd: float = 500000
     min_volume_24h_usd: float = 1000000
@@ -309,7 +309,7 @@ class Settings(BaseSettings):
         "provider_failure_threshold",
         "target_universe_size",
         "candidate_universe_size",
-        "discovery_gecko_pages",
+        "universe_gecko_pages",
         "min_token_age_days",
         "min_history_days",
         "universe_retention_days",

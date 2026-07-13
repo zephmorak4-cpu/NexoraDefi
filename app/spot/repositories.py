@@ -32,7 +32,7 @@ class SpotRepository:
         self.session.add(
             SpotUniverseSnapshot(
                 snapshot_id=build.snapshot_id,
-                candidates_discovered=build.candidates_discovered,
+                candidates_discovered=build.raw_candidates_retrieved,
                 eligible_count=len(build.eligible),
                 core_count=len(build.core),
                 candidate_count=len(build.candidate),
@@ -193,6 +193,13 @@ class SpotRepository:
                 .limit(limit)
             )
         ).all()
+        by_timestamp = {}
+        source_rank = {"GeckoTerminal": 2, "Birdeye": 1}
+        for row in rows:
+            current = by_timestamp.get(row.timestamp)
+            if current is None or source_rank.get(row.source, 0) > source_rank.get(current.source, 0):
+                by_timestamp[row.timestamp] = row
+        deduped = sorted(by_timestamp.values(), key=lambda row: row.timestamp)[-limit:]
         return [
             Candle(
                 token_address=row.token_address,
@@ -207,7 +214,7 @@ class SpotRepository:
                 source=row.source,
                 is_closed=row.is_closed,
             )
-            for row in reversed(rows)
+            for row in deduped
         ]
 
     async def signal_exists(self, fingerprint: str) -> bool:

@@ -22,11 +22,14 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         logger.info("scheduler_started", jobs=[job.id for job in scheduler.get_jobs()])
         logger.info(
-            "repository_reset_runtime",
-            discontinued_engine="removed",
-            trading_workflows="inactive",
-            market_scanners="inactive",
-            ready_for="Spot Momentum Engine development",
+            "spot_momentum_runtime",
+            product="Solana Spot Momentum Engine",
+            universe_mode="ESTABLISHED_ASSETS",
+            new_token_discovery="DISABLED",
+            new_pair_discovery="DISABLED",
+            pump_fun_scanning="DISABLED",
+            strategy="TREND_ALIGNED_VOLATILITY_EXPANSION",
+            trading_mode="PAPER_ONLY",
         )
     yield
     if scheduler.running:
