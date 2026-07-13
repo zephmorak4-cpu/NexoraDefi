@@ -129,6 +129,8 @@ async def test_market_data_gateway_normalizes_dexscreener_and_gecko():
             return httpx.Response(200, json=[{"chainId": "solana", "tokenAddress": "TokenA"}])
         if request.url.path == "/token-pairs/v1/solana/TokenA":
             return httpx.Response(200, json=[{"chainId": "solana", "pairAddress": "PoolA", "dexId": "orca", "baseToken": {"address": "TokenA", "symbol": "TOK", "name": "Token"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": "1000000"}, "volume": {"h24": "2000000"}, "marketCap": "10000000"}])
+        if request.url.path == "/latest/dex/search":
+            return httpx.Response(200, json={"pairs": [{"chainId": "solana", "pairAddress": "PoolB", "dexId": "raydium", "baseToken": {"address": "TokenB", "symbol": "JUP", "name": "Jupiter"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": "3000000"}, "volume": {"h24": "5000000"}, "marketCap": "100000000"}]})
         return httpx.Response(404)
 
     def gecko_handler(request: httpx.Request) -> httpx.Response:
@@ -142,5 +144,6 @@ async def test_market_data_gateway_normalizes_dexscreener_and_gecko():
     gateway = MarketDataGateway(settings, dex, gecko)
     tokens = await gateway.discover_solana_candidates()
     assert tokens[0].address == "TokenA"
+    assert {token.address for token in tokens} == {"TokenA", "TokenB"}
     assert (await gateway.candles(tokens[0], "15m"))[0].close == 1.5
     await gateway.close()

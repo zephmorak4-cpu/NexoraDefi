@@ -43,7 +43,7 @@ class MarketDataGateway:
         self.geckoterminal = geckoterminal or GeckoTerminalClient(settings)
 
     async def discover_solana_candidates(self) -> list[TokenAsset]:
-        profiles = await self.dexscreener.request("/token-profiles/latest/v1")
+        profiles = await self._safe_dex_request("/token-profiles/latest/v1") or []
         tokens: dict[str, TokenAsset] = {}
         for profile in profiles if isinstance(profiles, list) else []:
             if not isinstance(profile, dict) or profile.get("chainId") != "solana":
@@ -51,41 +51,62 @@ class MarketDataGateway:
             token_address = str(profile.get("tokenAddress") or "")
             if not token_address:
                 continue
-            pairs = await self.dexscreener.request(f"/token-pairs/v1/solana/{token_address}")
+            pairs = await self._safe_dex_request(f"/token-pairs/v1/solana/{token_address}") or []
             for pair in pairs if isinstance(pairs, list) else []:
                 asset = self._asset_from_dex_pair(pair)
-                if asset and (asset.address not in tokens or (asset.liquidity_usd or 0) > (tokens[asset.address].liquidity_usd or 0)):
-                    tokens[asset.address] = asset
+                if asset:
+                    self._add_best(tokens, asset)
+        for asset in await self._dex_search_candidates():
+            self._add_best(tokens, asset)
         if len(tokens) < self.settings.candidate_universe_size:
             for asset in await self._gecko_candidates():
-                if asset.address not in tokens:
-                    tokens[asset.address] = asset
+                self._add_best(tokens, asset)
         return list(tokens.values())
 
     async def _gecko_candidates(self) -> list[TokenAsset]:
-        payload = await self.geckoterminal.network_pools(page=1)
         assets: list[TokenAsset] = []
-        for item in payload.get("data", []) if isinstance(payload, dict) else []:
-            attributes = item.get("attributes") or {}
-            relationships = item.get("relationships") or {}
-            base = (relationships.get("base_token", {}).get("data") or {}).get("id", "")
-            token_address = str(base).split("_")[-1] if base else str(attributes.get("address") or "")
-            name = str(attributes.get("name") or "UNKNOWN")
-            symbol = name.split("/")[0].strip()[:32] or "UNKNOWN"
-            assets.append(
-                TokenAsset(
-                    chain="solana",
-                    address=token_address,
-                    symbol=symbol,
-                    name=name[:128],
-                    liquidity_usd=number(attributes.get("reserve_in_usd")),
-                    volume_24h_usd=number((attributes.get("volume_usd") or {}).get("h24")),
-                    primary_pool_address=str(item.get("id") or "").split("_")[-1],
-                    primary_dex=str(attributes.get("dex_id") or "geckoterminal"),
-                    data_sources=["GeckoTerminal"],
+        for page in range(1, self.settings.discovery_gecko_pages + 1):
+            try:
+                payload = await self.geckoterminal.network_pools(page=page)
+            except Exception:
+                continue
+            for item in payload.get("data", []) if isinstance(payload, dict) else []:
+                attributes = item.get("attributes") or {}
+                relationships = item.get("relationships") or {}
+                base = (relationships.get("base_token", {}).get("data") or {}).get("id", "")
+                token_address = str(base).split("_")[-1] if base else str(attributes.get("address") or "")
+                name = str(attributes.get("name") or "UNKNOWN")
+                symbol = name.split("/")[0].strip().upper()[:32] or "UNKNOWN"
+                quote_symbol = name.split("/")[-1].strip().upper()[:32] if "/" in name else None
+                assets.append(
+                    TokenAsset(
+                        chain="solana",
+                        address=token_address,
+                        symbol=symbol,
+                        name=name[:128],
+                        market_cap_usd=number(attributes.get("market_cap_usd")),
+                        fdv_usd=number(attributes.get("fdv_usd")),
+                        liquidity_usd=number(attributes.get("reserve_in_usd")),
+                        volume_24h_usd=number((attributes.get("volume_usd") or {}).get("h24")),
+                        primary_pool_address=str(item.get("id") or "").split("_")[-1],
+                        primary_dex=str(attributes.get("dex_id") or "geckoterminal"),
+                        quote_asset=quote_symbol,
+                        data_sources=["GeckoTerminal"],
+                    )
                 )
-            )
         return [asset for asset in assets if asset.address]
+
+    async def _dex_search_candidates(self) -> list[TokenAsset]:
+        queries = [item.strip() for item in self.settings.discovery_dex_search_queries.split(",") if item.strip()]
+        assets: list[TokenAsset] = []
+        for query in queries:
+            payload = await self._safe_dex_request("/latest/dex/search", params={"q": query})
+            pairs = payload.get("pairs") if isinstance(payload, dict) else None
+            for pair in pairs if isinstance(pairs, list) else []:
+                asset = self._asset_from_dex_pair(pair)
+                if asset:
+                    assets.append(asset)
+        return assets
 
     async def candles(self, token: TokenAsset, timeframe: str, limit: int = 200) -> list[Candle]:
         if not token.primary_pool_address:
@@ -171,7 +192,39 @@ class MarketDataGateway:
             data_sources=["DEX Screener"],
         )
 
+    async def _safe_dex_request(self, path: str, params: dict[str, Any] | None = None) -> Any | None:
+        try:
+            return await self.dexscreener.request(path, params=params)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _add_best(tokens: dict[str, TokenAsset], asset: TokenAsset) -> None:
+        existing = tokens.get(asset.address)
+        if existing is None:
+            tokens[asset.address] = asset
+            return
+        if (asset.liquidity_usd or 0) > (existing.liquidity_usd or 0):
+            sources = sorted(set(existing.data_sources + asset.data_sources))
+            tokens[asset.address] = TokenAsset(
+                chain=asset.chain,
+                address=asset.address,
+                symbol=asset.symbol,
+                name=asset.name,
+                decimals=asset.decimals or existing.decimals,
+                created_at=asset.created_at or existing.created_at,
+                market_cap_usd=asset.market_cap_usd or existing.market_cap_usd,
+                fdv_usd=asset.fdv_usd or existing.fdv_usd,
+                liquidity_usd=asset.liquidity_usd or existing.liquidity_usd,
+                volume_24h_usd=asset.volume_24h_usd or existing.volume_24h_usd,
+                primary_pool_address=asset.primary_pool_address or existing.primary_pool_address,
+                primary_dex=asset.primary_dex or existing.primary_dex,
+                quote_asset=asset.quote_asset or existing.quote_asset,
+                data_sources=sources,
+            )
+            return
+        existing.data_sources.extend(source for source in asset.data_sources if source not in existing.data_sources)
+
     async def close(self) -> None:
         await self.dexscreener.close()
         await self.geckoterminal.close()
-

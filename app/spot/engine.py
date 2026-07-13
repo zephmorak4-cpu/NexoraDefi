@@ -56,10 +56,14 @@ class SpotMomentumEngine:
     async def refresh_market_data(self, session: AsyncSession, limit: int = 200) -> dict[str, int]:
         repo = SpotRepository(session)
         tokens = await repo.latest_core_tokens()
-        counts = {"tokens": len(tokens), "candles": 0}
+        counts = {"tokens": len(tokens), "candles": 0, "errors": 0}
         for token in tokens:
             for timeframe in ("4h", "1h", "15m"):
-                candles = await self.market_data.candles(token, timeframe, limit)
+                try:
+                    candles = await self.market_data.candles(token, timeframe, limit)
+                except Exception:
+                    counts["errors"] += 1
+                    continue
                 await repo.upsert_candles(candles)
                 counts["candles"] += len(candles)
         await session.commit()
