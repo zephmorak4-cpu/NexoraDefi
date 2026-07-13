@@ -37,6 +37,12 @@ Keep-awake workflow:
 - Target: `https://nexora-defi-dev.onrender.com/health/live`
 - Manual trigger: GitHub Actions `workflow_dispatch`
 
+Local backup ping loop:
+
+- `scripts/keep_render_awake.ps1`
+- Runs from this Windows machine while the machine is awake and connected.
+- Use only as a backup; GitHub Actions is preferred because it does not depend on the local PC staying on.
+
 ## Environment Variables
 
 Required:
