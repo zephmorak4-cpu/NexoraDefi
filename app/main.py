@@ -7,6 +7,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.database.session import engine
 from app.jobs.scheduler import build_scheduler
+from app.spot.api import router as spot_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -35,3 +36,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, version="2.0.0-reset", lifespan=lifespan)
 app.include_router(router)
+app.include_router(spot_router)

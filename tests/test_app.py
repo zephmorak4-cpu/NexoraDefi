@@ -10,14 +10,15 @@ def test_fastapi_starts_and_serves_health():
     assert response.json() == {"status": "ok"}
 
 
-def test_reset_runtime_reports_no_active_workflows():
+def test_spot_runtime_reports_fail_safe_readiness():
     with TestClient(app) as client:
         ready = client.get("/ready")
         integrations = client.get("/integrations/health")
 
-    assert ready.status_code == 200
-    assert ready.json()["market_scanners_active"] is False
-    assert ready.json()["signal_engines_active"] is False
-    assert ready.json()["automatic_alerts_active"] is False
+    assert ready.status_code in {200, 503}
+    assert ready.json()["runtime"] == "spot_momentum_paper_trading"
+    assert ready.json()["market_scanners_active"] is True
+    assert ready.json()["signal_engines_active"] is True
+    assert "missing_capabilities" in ready.json()
     assert integrations.status_code == 200
     assert "checks" in integrations.json()

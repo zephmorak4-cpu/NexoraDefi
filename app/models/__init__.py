@@ -14,6 +14,20 @@ from app.models.risk import RiskEvent, TokenRiskMetric
 from app.models.intelligence import WalletReview
 from app.models.market_context import MarketContext
 from app.models.smart_money import SmartMoneySignal, WalletMetric, WalletPosition, WalletScore
+from app.models.spot import (
+    DailyPerformance,
+    PaperAccount,
+    PaperFill,
+    PaperPosition,
+    ProviderHealthRecord,
+    SpotCandle,
+    SpotSetupEvaluation,
+    SpotToken,
+    SpotTokenPool,
+    SpotTradeSignal,
+    SpotUniverseMember,
+    SpotUniverseSnapshot,
+)
 from app.models.solana_smart_money import TokenQuality, TrackedWallet, WalletActivity
 from app.models.token_intelligence import MomentumMetric, TokenGrowthMetric
 
@@ -44,4 +58,16 @@ __all__ = [
     "CandidateTokenHistory",
     "WalletReview",
     "MarketContext",
+    "ProviderHealthRecord",
+    "SpotToken",
+    "SpotTokenPool",
+    "SpotUniverseSnapshot",
+    "SpotUniverseMember",
+    "SpotCandle",
+    "SpotSetupEvaluation",
+    "SpotTradeSignal",
+    "PaperAccount",
+    "PaperPosition",
+    "PaperFill",
+    "DailyPerformance",
 ]

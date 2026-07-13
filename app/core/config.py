@@ -47,9 +47,61 @@ class Settings(BaseSettings):
     birdeye_enabled: bool = True
     helius_enabled: bool = True
     solana_rpc_enabled: bool = True
+    geckoterminal_enabled: bool = True
+    jupiter_enabled: bool = True
+    telegram_signals_enabled: bool = True
+    telegram_trade_updates_enabled: bool = True
+    telegram_daily_digest_enabled: bool = True
+    openai_explanations_enabled: bool = False
+    openai_model: str | None = None
+    dry_run: bool = True
+    paper_trading_enabled: bool = True
+    live_trading_enabled: bool = False
     provider_timeout_ms: int = 10000
     provider_retry_count: int = 2
+    provider_cooldown_seconds: int = 120
+    provider_failure_threshold: int = 3
     discord_alerts_enabled: bool = False
+    discord_enabled: bool = False
+    jupiter_api_key: str | None = None
+    geckoterminal_api_key: str | None = None
+
+    target_universe_size: int = 30
+    candidate_universe_size: int = 100
+    min_token_age_days: int = 30
+    min_liquidity_usd: float = 500000
+    min_volume_24h_usd: float = 1000000
+    min_market_cap_usd: float = 5000000
+    max_market_cap_usd: float = 0
+    max_spread_bps: float = 100
+    min_data_completeness: float = 0.90
+    min_history_days: int = 30
+    universe_retention_days: int = 7
+    market_scan_interval_minutes: int = 15
+    position_monitor_interval_minutes: int = 5
+    provider_health_interval_minutes: int = 15
+    daily_performance_interval_hours: int = 24
+    primary_quote_asset: str = "USDC"
+    supported_chain: str = "solana"
+
+    strategy_version: str = "spot-momentum-v1"
+    strategy_ema_fast: int = 20
+    strategy_ema_slow: int = 50
+    strategy_atr_period: int = 14
+    signal_min_reward_risk: float = 2.0
+    signal_min_quality_score: float = 80
+    max_stop_distance_percent: float = 6
+    min_stop_distance_percent: float = 0.8
+    max_open_paper_trades: int = 3
+    risk_per_paper_trade_percent: float = 1
+    paper_account_starting_balance_usd: float = 10000
+    estimated_fees_bps: float = 20
+    estimated_slippage_bps: float = 20
+    entry_expiry_candles: int = 8
+    max_holding_candles: int = 96
+    conservative_intrabar_fills: bool = True
+    backtest_start_date: str | None = None
+    backtest_end_date: str | None = None
 
     smart_money_profitability_weight: float = 0.40
     smart_money_consistency_weight: float = 0.25
@@ -250,6 +302,23 @@ class Settings(BaseSettings):
         "news_refresh_seconds",
         "provider_timeout_ms",
         "provider_retry_count",
+        "provider_cooldown_seconds",
+        "provider_failure_threshold",
+        "target_universe_size",
+        "candidate_universe_size",
+        "min_token_age_days",
+        "min_history_days",
+        "universe_retention_days",
+        "market_scan_interval_minutes",
+        "position_monitor_interval_minutes",
+        "provider_health_interval_minutes",
+        "daily_performance_interval_hours",
+        "strategy_ema_fast",
+        "strategy_ema_slow",
+        "strategy_atr_period",
+        "max_open_paper_trades",
+        "entry_expiry_candles",
+        "max_holding_candles",
         "wallet_analysis_interval_seconds",
         "wallet_scoring_interval_seconds",
         "wallet_monitor_interval_seconds",
@@ -315,6 +384,26 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError("scheduler intervals must be positive")
         return value
+
+    @model_validator(mode="after")
+    def validate_spot_momentum_configuration(self) -> "Settings":
+        if self.supported_chain.lower() != "solana":
+            raise ValueError("Spot Momentum Engine supports Solana only")
+        if not self.paper_trading_enabled:
+            raise ValueError("Paper trading must remain enabled for the MVP")
+        if self.live_trading_enabled:
+            raise ValueError("Live trading is not allowed")
+        if self.target_universe_size < 1 or self.candidate_universe_size < self.target_universe_size:
+            raise ValueError("Universe sizes must be positive and candidate >= target")
+        if not 0 < self.min_data_completeness <= 1:
+            raise ValueError("Minimum data completeness must be within 0-1")
+        if self.signal_min_reward_risk <= 0:
+            raise ValueError("Signal minimum reward/risk must be positive")
+        if not 0 <= self.signal_min_quality_score <= 100:
+            raise ValueError("Signal quality score must be within 0-100")
+        if self.min_stop_distance_percent <= 0 or self.max_stop_distance_percent <= self.min_stop_distance_percent:
+            raise ValueError("Stop-distance bounds are invalid")
+        return self
 
     @model_validator(mode="after")
     def validate_smart_money_configuration(self) -> "Settings":

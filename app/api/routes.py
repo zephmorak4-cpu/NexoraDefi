@@ -4,6 +4,7 @@ from app.core.config import get_settings
 from app.database.health import check_database
 from app.database.session import engine
 from app.integrations.health import integration_status
+from app.spot.providers import ProviderCapabilityService
 
 router = APIRouter()
 
@@ -17,6 +18,7 @@ async def health() -> dict[str, str]:
 async def ready(response: Response) -> dict[str, object]:
     database_ok = await check_database(engine)
     settings = get_settings()
+    provider_audit = await ProviderCapabilityService(settings).audit(live=False)
     required_credentials = {
         "database": database_ok,
     }
@@ -35,16 +37,18 @@ async def ready(response: Response) -> dict[str, object]:
         "openai": settings.openai_api_key if settings.analyst_provider == "openai" else True,
     }
     credentials_ok = all(required_credentials.values())
-    ready_now = database_ok
+    ready_now = database_ok and not provider_audit.missing_capabilities
     if not ready_now:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
         "status": "ready" if ready_now else "not_ready",
+        "readiness_state": provider_audit.state.value if database_ok else "NOT_READY",
         "database": database_ok,
-        "runtime": "reset",
-        "market_scanners_active": False,
-        "signal_engines_active": False,
-        "automatic_alerts_active": False,
+        "runtime": "spot_momentum_paper_trading",
+        "market_scanners_active": settings.scheduler_enabled and settings.paper_trading_enabled,
+        "signal_engines_active": settings.paper_trading_enabled,
+        "automatic_alerts_active": settings.telegram_signals_enabled,
+        "missing_capabilities": provider_audit.missing_capabilities,
         "required_credentials": {name: bool(value) for name, value in required_credentials.items()},
         "optional_credentials": {name: bool(value) for name, value in optional_credentials.items()},
     }

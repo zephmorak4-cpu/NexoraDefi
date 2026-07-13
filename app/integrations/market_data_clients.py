@@ -105,3 +105,52 @@ class SolanaRPCClient:
     async def close(self) -> None:
         if self._owns_client:
             await self.client.aclose()
+
+
+class GeckoTerminalClient:
+    def __init__(self, settings: Settings, client: AsyncAPIClient | None = None) -> None:
+        self.settings = settings
+        self.client = client or AsyncAPIClient(
+            "https://api.geckoterminal.com/api/v2",
+            timeout=settings.provider_timeout_ms / 1000,
+            max_retries=settings.provider_retry_count,
+        )
+
+    async def request(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        return await self.client.request_json("GET", path, params=params)
+
+    async def network_pools(self, page: int = 1) -> Any:
+        return await self.request("/networks/solana/pools", params={"page": page})
+
+    async def ohlcv(self, pool_address: str, timeframe: str, aggregate: int = 1, limit: int = 200) -> Any:
+        path = f"/networks/solana/pools/{pool_address}/ohlcv/{timeframe}"
+        return await self.request(path, params={"aggregate": aggregate, "limit": limit})
+
+    def configuration_status(self) -> str:
+        return "CONFIGURED" if self.settings.geckoterminal_enabled else "DISABLED"
+
+    async def close(self) -> None:
+        await self.client.close()
+
+
+class JupiterClient:
+    def __init__(self, settings: Settings, client: AsyncAPIClient | None = None) -> None:
+        self.settings = settings
+        self.client = client or AsyncAPIClient(
+            "https://quote-api.jup.ag",
+            timeout=settings.provider_timeout_ms / 1000,
+            max_retries=settings.provider_retry_count,
+        )
+
+    async def quote(self, input_mint: str, output_mint: str, amount: int) -> Any:
+        return await self.client.request_json(
+            "GET",
+            "/v6/quote",
+            params={"inputMint": input_mint, "outputMint": output_mint, "amount": amount},
+        )
+
+    def configuration_status(self) -> str:
+        return "CONFIGURED" if self.settings.jupiter_enabled else "DISABLED"
+
+    async def close(self) -> None:
+        await self.client.close()
