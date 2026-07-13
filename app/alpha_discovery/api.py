@@ -6,6 +6,7 @@ from sqlalchemy import desc, func, select
 
 from app.alpha_discovery.audit import ALPHA_DISCOVERY_AUDIT
 from app.alpha_discovery.jobs import scan_new_launches, send_alpha_discovery_report, send_alpha_watchlist_digest
+from app.alpha_discovery.services import MarketDataService
 from app.core.config import get_settings
 from app.database.session import SessionFactory
 from app.models import AlphaAlertHistory, AlphaProviderSnapshot, AlphaScannedToken, AlphaWatchlistToken
@@ -64,8 +65,34 @@ def _reason_summary(reason_rows: list[list[str] | None], limit: int = 12) -> lis
 
 
 @router.post("/scan")
-async def run_alpha_scan() -> dict[str, int]:
+async def run_alpha_scan() -> dict[str, Any]:
     return await scan_new_launches()
+
+
+@router.get("/provider-check")
+async def alpha_provider_check() -> dict[str, Any]:
+    settings = get_settings()
+    market_data = MarketDataService(settings)
+    try:
+        launches = await market_data.latest_solana_launches()
+        return {
+            "launch_detector": market_data.last_launch_diagnostics,
+            "provider_health": market_data.health.snapshot(),
+            "sample": [
+                {
+                    "token_address": token.token_address,
+                    "symbol": token.symbol,
+                    "pair_address": token.pair_address,
+                    "dex": token.dex,
+                    "launch_time": token.launch_time,
+                    "liquidity_usd": token.liquidity_usd,
+                    "volume_usd": token.volume_usd,
+                }
+                for token in launches[:10]
+            ],
+        }
+    finally:
+        await market_data.close()
 
 
 @router.get("/tokens")

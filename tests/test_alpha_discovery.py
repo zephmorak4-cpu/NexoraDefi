@@ -282,6 +282,22 @@ async def test_market_data_profile_fallback_when_pair_lookup_fails():
     await market_data.close()
 
 
+async def test_market_data_records_launch_provider_failure_diagnostics():
+    market_data = MarketDataService(
+        Settings(birdeye_enabled=False, helius_enabled=False, solana_rpc_enabled=False),
+        client=FakeProviderClient({"/token-profiles/latest/v1": RuntimeError("connect failed")}),
+    )
+
+    launches = await market_data.latest_solana_launches()
+
+    assert launches == []
+    assert market_data.last_launch_diagnostics["provider"] == "DEXSCREENER"
+    assert market_data.last_launch_diagnostics["status"] == "failed"
+    assert market_data.last_launch_diagnostics["raw_candidates"] == 0
+    assert market_data.health.snapshot()["DEXSCREENER"]["status"] == "DEGRADED"
+    await market_data.close()
+
+
 def test_alpha_alert_message_explains_addresses_and_manual_review():
     message = format_alpha_alert(
         _launch(),

@@ -11,12 +11,17 @@ from sqlalchemy import desc, select
 logger = get_logger(__name__)
 
 
-async def scan_new_launches() -> dict[str, int]:
+async def scan_new_launches() -> dict[str, object]:
     settings = get_settings()
     async with SessionFactory() as session:
         engine = SolanaAlphaDiscoveryEngine(session, settings)
         try:
-            return await engine.scan()
+            counts = await engine.scan()
+            return {
+                **counts,
+                "launch_detector": engine.market_data.last_launch_diagnostics,
+                "provider_health": engine.market_data.health.snapshot(),
+            }
         except Exception:
             await session.rollback()
             logger.exception("alpha_discovery_scan_failed")

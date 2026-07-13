@@ -36,6 +36,7 @@ class MarketDataService:
         self.helius = helius or HeliusService(settings)
         self.solana_rpc = solana_rpc or SolanaRPCService(settings)
         self.health = health or ProviderHealthService()
+        self.last_launch_diagnostics: dict[str, Any] = {}
 
     async def latest_solana_launches(self) -> list[TokenLaunch]:
         return await self.get_new_solana_launches()
@@ -44,10 +45,20 @@ class MarketDataService:
         result = await safe_provider_call("DEXSCREENER", self.dexscreener.get_latest_solana_pairs)
         if not result.ok:
             self.health.failure(result.provider, result.error)
+            self.last_launch_diagnostics = {
+                "provider": result.provider,
+                "status": "failed",
+                "error": result.error,
+                "raw_candidates": 0,
+                "within_lookback": 0,
+                "deduped": 0,
+                "enriched": 0,
+            }
             logger.warning("[LaunchDetector] Provider: DEXSCREENER unavailable")
             return []
         self.health.success(result.provider)
-        launches = [token for token in (result.data or []) if self._within_lookback(token)]
+        raw_launches = result.data or []
+        launches = [token for token in raw_launches if self._within_lookback(token)]
         logger.info("[LaunchDetector] Provider: DEXSCREENER")
         logger.info("[LaunchDetector] New Solana launches found: %s", len(launches))
         deduped = self._dedupe(launches)
@@ -55,6 +66,15 @@ class MarketDataService:
         enriched: list[TokenLaunch] = []
         for token in deduped[: self.settings.alpha_launch_scan_limit]:
             enriched.append(await self.get_enriched_token_data(token))
+        self.last_launch_diagnostics = {
+            "provider": result.provider,
+            "status": "ok",
+            "error": None,
+            "raw_candidates": len(raw_launches),
+            "within_lookback": len(launches),
+            "deduped": len(deduped),
+            "enriched": len(enriched),
+        }
         logger.info("alpha_market_data_launches_loaded", count=len(enriched), provider_health=self.health.snapshot())
         return enriched
 
