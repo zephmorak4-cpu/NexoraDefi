@@ -10,6 +10,7 @@ from app.services.http import AsyncAPIClient
 from app.spot.backtest import BacktestEngine
 from app.spot.indicators import atr, ema, validate_closed_candles
 from app.spot.market_data import MarketDataGateway
+from app.spot.notifications import format_operational_alert
 from app.spot.paper import PaperBroker
 from app.spot.providers import ProviderCapabilityService, ProviderStatus
 from app.spot.strategy import TrendAlignedVolatilityExpansion
@@ -165,6 +166,17 @@ def test_pump_fun_style_assets_are_excluded_from_established_universe():
     build = UniverseBuilder(Settings()).build([token])
     assert build.core == []
     assert "pump.fun launch asset excluded" in build.excluded[0].reasons
+
+
+def test_operational_alert_formatter_omits_secret_like_fields():
+    message = format_operational_alert(
+        "SYSTEM_READY",
+        "READY",
+        {"database": "healthy", "api_key": "secret", "bot_token": "secret"},
+    )
+    assert "database: healthy" in message
+    assert "secret" not in message
+    assert "api_key" not in message
 
 
 def test_null_market_cap_does_not_force_zero_rejection_when_other_critical_fields_pass():

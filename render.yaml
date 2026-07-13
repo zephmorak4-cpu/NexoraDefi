@@ -6,12 +6,26 @@ services:
     branch: development
     buildCommand: pip install -e .
     startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
+    healthCheckPath: /health/live
     autoDeploy: true
     envVars:
       - key: APP_ENV
         value: production
       - key: DATABASE_URL
+        sync: false
+      - key: PAPER_TRADING_ENABLED
+        value: "true"
+      - key: LIVE_TRADING_ENABLED
+        value: "false"
+      - key: DRY_RUN
+        value: "true"
+      - key: DEXSCREENER_ENABLED
+        value: "true"
+      - key: GECKOTERMINAL_ENABLED
+        value: "true"
+      - key: BIRDEYE_ENABLED
+        value: "true"
+      - key: BIRDEYE_API_KEY
         sync: false
       - key: MORALIS_API_KEY
         sync: false
@@ -19,6 +33,8 @@ services:
         sync: false
       - key: COINGECKO_API_KEY
         sync: false
+      - key: COINGECKO_ENABLED
+        value: "false"
       - key: REDDIT_CLIENT_ID
         sync: false
       - key: REDDIT_CLIENT_SECRET

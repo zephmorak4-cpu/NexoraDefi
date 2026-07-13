@@ -32,6 +32,23 @@ def format_trade_plan(plan: TradePlan) -> str:
     )
 
 
+def format_operational_alert(event: str, status: str, details: dict[str, object] | None = None) -> str:
+    safe_details = details or {}
+    lines = [
+        "SOLANA ENGINE OPERATIONAL ALERT",
+        "",
+        f"Event: {event}",
+        f"Status: {status}",
+        "Mode: PAPER OBSERVATION",
+        "Live trading: Disabled",
+    ]
+    for key, value in safe_details.items():
+        if "key" in key.lower() or "token" in key.lower() or "secret" in key.lower() or "url" in key.lower():
+            continue
+        lines.append(f"{key}: {value}")
+    return "\n".join(lines)
+
+
 class SignalNotificationService:
     def __init__(self, settings: Settings, client: TelegramClient | None = None) -> None:
         self.settings = settings
@@ -49,6 +66,16 @@ class SignalNotificationService:
         await self.client.send_message(
             self.settings.telegram_chat_id,
             "Nexora Spot Momentum test message. No trade signal. No live order.",
+            parse_mode="",
+        )
+        return True
+
+    async def send_operational_alert(self, event: str, status: str, details: dict[str, object] | None = None) -> bool:
+        if not self.client or not self.settings.telegram_chat_id:
+            return False
+        await self.client.send_message(
+            self.settings.telegram_chat_id,
+            format_operational_alert(event, status, details),
             parse_mode="",
         )
         return True

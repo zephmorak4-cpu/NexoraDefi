@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -191,3 +191,51 @@ class DailyPerformance(Base):
     date: Mapped[str] = mapped_column(String(10), index=True)
     metrics_json: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SpotJobLock(Base):
+    __tablename__ = "spot_job_locks"
+
+    job_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    lock_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    worker_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SpotJobExecution(Base):
+    __tablename__ = "spot_job_executions"
+    __table_args__ = (
+        UniqueConstraint("job_name", "scheduled_for", name="uq_spot_job_execution_window"),
+        Index("ix_spot_job_execution_name_status", "job_name", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_name: Mapped[str] = mapped_column(String(64), index=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    build_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    records_processed: Mapped[int] = mapped_column(Integer, default=0)
+    next_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SpotSystemIncident(Base):
+    __tablename__ = "spot_system_incidents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    severity: Mapped[str] = mapped_column(String(32), index=True)
+    component: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    details_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
