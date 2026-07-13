@@ -6,7 +6,7 @@ Application language: Python 3.12
 Framework: FastAPI  
 Package manager: pip / editable Python package  
 Current Render service type: web  
-Current Render plan: `starter` in `render.yaml`  
+Current Render plan: `free`  
 Deployment branch: `development`  
 Build command: `pip install -e .`  
 Start command: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`  
@@ -15,19 +15,27 @@ Scheduler: APScheduler inside the web process, guarded by database job locks
 
 ## Runtime Decision
 
-Selected: paid always-on Render web service.
+Selected for current phase: free Render web service with external keep-awake pings.
 
 Reason:
 
-- Five-minute paper-position monitoring is required.
-- Fifteen-minute setup scans should run predictably after candle windows.
-- The scheduler already runs inside the application.
-- Free web services can sleep and miss scan windows.
+- Render free web services can sleep after idle periods.
+- Internal self-ping loops are not reliable after the service has already slept because the app process is no longer running.
+- A GitHub Actions workflow sends inbound traffic to `/health/live` every five minutes to reduce idle spin-down.
+- This is acceptable for development/paper observation, but it is still not equivalent to an always-on paid service.
 
 Required user action:
 
-- Keep the Render service on an always-on paid plan.
-- Do not rely on self-ping loops as production scheduling.
+- Keep GitHub Actions enabled for the repository.
+- Monitor Render free instance-hour usage.
+- Upgrade to a paid instance before treating the scheduler as mission-critical production infrastructure.
+
+Keep-awake workflow:
+
+- `.github/workflows/keep-render-awake.yml`
+- Schedule: every five minutes
+- Target: `https://nexora-defi-dev.onrender.com/health/live`
+- Manual trigger: GitHub Actions `workflow_dispatch`
 
 ## Environment Variables
 

@@ -1,0 +1,27 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-render-awake
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Render liveness endpoint
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 30 \
+            --retry 2 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            "https://nexora-defi-dev.onrender.com/health/live"
