@@ -37,6 +37,12 @@ services:
         value: "250000"
       - key: MIN_MARKET_CAP_USD
         value: "0"
+      - key: STRATEGY_EMA_FAST
+        value: "12"
+      - key: STRATEGY_EMA_SLOW
+        value: "30"
+      - key: SIGNAL_MIN_QUALITY_SCORE
+        value: "70"
       - key: BIRDEYE_API_KEY
         sync: false
       - key: MORALIS_API_KEY
