@@ -25,6 +25,18 @@ services:
         value: "true"
       - key: BIRDEYE_ENABLED
         value: "true"
+      - key: TARGET_UNIVERSE_SIZE
+        value: "30"
+      - key: CANDIDATE_UNIVERSE_SIZE
+        value: "100"
+      - key: MIN_TOKEN_AGE_DAYS
+        value: "14"
+      - key: MIN_LIQUIDITY_USD
+        value: "100000"
+      - key: MIN_VOLUME_24H_USD
+        value: "250000"
+      - key: MIN_MARKET_CAP_USD
+        value: "0"
       - key: BIRDEYE_API_KEY
         sync: false
       - key: MORALIS_API_KEY
