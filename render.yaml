@@ -29,6 +29,10 @@ services:
         value: "30"
       - key: CANDIDATE_UNIVERSE_SIZE
         value: "100"
+      - key: UNIVERSE_GECKO_PAGES
+        value: "12"
+      - key: UNIVERSE_DEX_SEARCH_QUERIES
+        value: "solana,SOL,USDC,JUP,RAY,ORCA,BONK,WIF,JTO,PYTH,Jupiter,Raydium,Orca,Marinade,Kamino,Tensor,Drift,KMNO,DRIFT,JITOSOL,MSOL,INF,CLOUD,TNSR,GRASS,PENGU,PNUT,POPCAT,MEW,HNT,MOBILE,IO,ZEUS,W,RENDER"
       - key: MIN_TOKEN_AGE_DAYS
         value: "30"
       - key: MIN_LIQUIDITY_USD
