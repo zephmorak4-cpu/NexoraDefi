@@ -344,6 +344,59 @@ class SpotRepository:
             "rejection_reasons": [{"reason": reason, "count": count} for reason, count in sorted(reasons.items(), key=lambda item: item[1], reverse=True)[:10]],
         }
 
+    async def latest_scan_evaluations(self, limit: int = 100) -> dict[str, object]:
+        scan_id = await self.session.scalar(
+            select(SpotSetupEvaluation.scan_id).order_by(desc(SpotSetupEvaluation.created_at)).limit(1)
+        )
+        if not scan_id:
+            return {"scan_id": None, "evaluations": []}
+        rows = (
+            await self.session.execute(
+                select(SpotSetupEvaluation, SpotToken)
+                .join(SpotToken, SpotToken.address == SpotSetupEvaluation.token_address)
+                .where(SpotSetupEvaluation.scan_id == scan_id)
+                .order_by(SpotToken.symbol)
+                .limit(limit)
+            )
+        ).all()
+        return {
+            "scan_id": scan_id,
+            "evaluations": [
+                {
+                    "symbol": token.symbol,
+                    "address": token.address,
+                    "decision": evaluation.decision,
+                    "quality_score": float(evaluation.quality_score),
+                    "reward_risk": float(evaluation.reward_risk) if evaluation.reward_risk is not None else None,
+                    "rejection_reasons": evaluation.rejection_reasons,
+                    "plan": evaluation.plan_json,
+                }
+                for evaluation, token in rows
+            ],
+        }
+
+    async def core_candle_coverage(self, limit: int = 100) -> list[dict[str, object]]:
+        tokens = await self.latest_core_tokens()
+        coverage = []
+        for token in tokens[:limit]:
+            counts = {}
+            latest = {}
+            for timeframe in ("4h", "1h", "15m"):
+                rows = await self.candles(token.address, timeframe, 240)
+                counts[timeframe] = len(rows)
+                latest[timeframe] = rows[-1].timestamp if rows else None
+            coverage.append(
+                {
+                    "symbol": token.symbol,
+                    "address": token.address,
+                    "pool": token.primary_pool_address,
+                    "candle_counts": counts,
+                    "latest_candles": latest,
+                    "has_strategy_history": counts["4h"] >= 35 and counts["1h"] >= 35 and counts["15m"] >= 22,
+                }
+            )
+        return coverage
+
 
 def plan_to_json(plan: TradePlan) -> dict:
     return {
