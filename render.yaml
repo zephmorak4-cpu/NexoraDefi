@@ -30,7 +30,7 @@ services:
       - key: CANDIDATE_UNIVERSE_SIZE
         value: "100"
       - key: MIN_TOKEN_AGE_DAYS
-        value: "14"
+        value: "30"
       - key: MIN_LIQUIDITY_USD
         value: "100000"
       - key: MIN_VOLUME_24H_USD
